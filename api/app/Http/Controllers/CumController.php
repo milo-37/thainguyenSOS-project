@@ -29,16 +29,16 @@ class CumController extends Controller
             'lat' => 'nullable|numeric',
             'lng' => 'nullable|numeric',
             'dia_chi_text' => 'nullable|string',
-            'thanh_vien_ids' => 'array',
+            'thanh_vien_ids' => 'nullable|array',
             'thanh_vien_ids.*' => 'exists:users,id',
         ]);
-        DB::transaction(function() use (&$cum,$data){
-            $cum = Cum::create($data);
-            $cum->thanhViens()->sync($data['thanh_vien_ids'] ?? []);
-// auto tạo kho cho cụm nếu chưa có
-            Kho::firstOrCreate(['cum_id'=>$cum->id],['ten'=>"Kho cụm: ".$cum->ten]);
-        });
-        return response()->json($cum->fresh(['thanhViens','chiHuy']));
+        $cum = DB::transaction(function() use ($data){
+   $cum = Cum::create($data);
+   $cum->thanhViens()->sync($data['thanh_vien_ids'] ?? []);
+   Kho::firstOrCreate(['cum_id'=>$cum->id], ['ten'=>"Kho cụm: ".$cum->ten]);
+   return $cum;
+});
+return response()->json($cum->load(['thanhViens','chiHuy']));
     }
 
 
@@ -59,7 +59,7 @@ class CumController extends Controller
             'lat' => 'nullable|numeric',
             'lng' => 'nullable|numeric',
             'dia_chi_text' => 'nullable|string',
-            'thanh_vien_ids' => 'array',
+            'thanh_vien_ids' => 'nullable|array',
             'thanh_vien_ids.*' => 'exists:users,id',
         ]);
         DB::transaction(function() use ($cum,$data){

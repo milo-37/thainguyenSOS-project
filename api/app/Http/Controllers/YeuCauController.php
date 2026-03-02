@@ -120,7 +120,7 @@ class YeuCauController extends Controller
             // Ưu tiên dùng quan hệ nếu đã có:
             $cumIds = method_exists($user, 'cums')
                 ? $user->cums()->pluck('cums.id')
-                : \DB::table('cum_thanh_vien')->where('user_id', $user->id)->pluck('cum_id');
+                : DB::table('cum_thanh_vien')->where('user_id', $user->id)->pluck('cum_id');
 
             $q->where(function($w) use ($user, $cumIds){
                 $w->where('duoc_giao_cho', $user->id)
@@ -164,9 +164,6 @@ class YeuCauController extends Controller
 
         return $p;
     }
-
-
-
 
     /** GET /api/yeucau/{id} – trả chi tiết 1 bản ghi (kèm media & vật tư) */
     public function show($id)
@@ -316,7 +313,7 @@ class YeuCauController extends Controller
             ], 409);
         }
 
-        return \DB::transaction(function () use ($request, $data) {
+        return DB::transaction(function () use ($request, $data) {
             $data['trang_thai'] = 'tiep_nhan';
             if (empty($data['so_nguoi'])) $data['so_nguoi'] = 1;
 
@@ -413,7 +410,11 @@ class YeuCauController extends Controller
     }
 
     public function doiTrangThai($id, Request $r) {
-        $r->validate(['trang_thai'=>'required|in:tiep_nhan,dang_xuly,hoan_thanh,huy','ghichu'=>'nullable|string']);
+        $r->validate([
+    'trang_thai' => 'required|in:tiep_nhan,dang_xu_ly,da_chuyen_cum,da_hoan_thanh,huy',
+    'ghichu' => 'nullable|string'
+]);
+
         $curr = DB::table('yeu_cau')->where('id',$id)->first();
         DB::table('yeu_cau')->where('id',$id)->update(['trang_thai'=>$r->trang_thai,'updated_at'=>now()]);
         DB::table('yeu_cau_nhatky')->insert([

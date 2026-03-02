@@ -86,13 +86,28 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('users/{id}',[UserController::class, 'destroy']);
 
     // Roles & permissions
-    Route::get('roles',                    [RoleController::class, 'index']);
+    /*Route::get('roles',                    [RoleController::class, 'index']);
     Route::post('roles',                   [RoleController::class, 'store']);
     Route::put('roles/{id}',               [RoleController::class, 'update']);
     Route::delete('roles/{id}',            [RoleController::class, 'destroy']);
     Route::get('roles/{id}/permissions',   [RoleController::class, 'permissions']);
     Route::post('roles/{id}/permissions',  [RoleController::class, 'syncPermissions']);
-    Route::get('permissions', [RoleController::class, 'permissions']);
+    Route::get('permissions', [RoleController::class, 'permissions']);*/
+
+    Route::prefix('admin')->group(function () {
+    // ROLES
+    Route::get('/roles', [RoleController::class, 'index']);
+    Route::post('/roles', [RoleController::class, 'store']);
+    Route::put('/roles/{id}', [RoleController::class, 'update']);
+    Route::delete('/roles/{id}', [RoleController::class, 'destroy']);
+
+    // PERMISSIONS
+    Route::get('/permissions', [RoleController::class, 'permissions']);
+
+    // ROLE PERMISSIONS (GET + SYNC)
+    Route::get('/roles/{role}/permissions', [RoleController::class, 'rolePermissions']);
+    Route::post('/roles/{role}/permissions', [RoleController::class, 'syncRolePermissions']);
+});
 
     Route::get('kho', [KhoController::class, 'index']);
     Route::post('kho', [KhoController::class, 'store']);

@@ -1,359 +1,517 @@
 'use client';
-import { useEffect, useState } from 'react';
+
+import { useEffect, useMemo, useState } from 'react';
 import MapView, { MapPoint, Media, TrangThaiCode } from '@/components/MapView';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import Image from 'next/image';
-import { MapPin, SquareArrowOutUpRight } from 'lucide-react';
+import { Filter, MapPin, Search, SquareArrowOutUpRight, X } from 'lucide-react';
 
 const BASE = process.env.NEXT_PUBLIC_VIETMAP_STYLE_BASE!;
 const IS_ADMIN = process.env.NEXT_PUBLIC_IS_ADMIN === 'true';
 
-const STATUS_ENTRIES: Array<{code:TrangThaiCode; label:string}> = [
-    { code:'tiep_nhan',     label:'Tiếp nhận' },
-    { code:'dang_xu_ly',    label:'Đang xử lý' },
-    { code:'da_chuyen_cum', label:'Đã chuyển cụm' },
-    { code:'da_hoan_thanh', label:'Đã hoàn thành' },
-    { code:'huy',           label:'Hủy' },
+const STATUS_ENTRIES: Array<{ code: TrangThaiCode; label: string; color: string }> = [
+  { code: 'tiep_nhan', label: 'Tiếp nhận', color: '#0ea5e9' },
+  { code: 'dang_xu_ly', label: 'Đang xử lý', color: '#f59e0b' },
+  { code: 'da_chuyen_cum', label: 'Đã chuyển cụm', color: '#6366f1' },
+  { code: 'da_hoan_thanh', label: 'Đã hoàn thành', color: '#10b981' },
+  { code: 'huy', label: 'Hủy', color: '#ef4444' },
 ];
 
-// ==== helper hiển thị "x phút trước" ====
 function timeAgo(iso?: string) {
-    if (!iso) return '';
-    const t = new Date(iso).getTime();
-    if (Number.isNaN(t)) return '';
-    const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
-    if (s < 60) return `${s} giây trước`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m} phút trước`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h} giờ trước`;
-    const d = Math.floor(h / 24);
-    return `${d} ngày trước`;
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return '';
+  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return `${s} giây trước`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} phút trước`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} giờ trước`;
+  const d = Math.floor(h / 24);
+  return `${d} ngày trước`;
 }
 
-export default function MapPage(){
-    const [points, setPoints] = useState<MapPoint[]>([]);
-    const [view, setView]   = useState<{center:[number,number]; zoom:number}>({ center:[105.85,21.03], zoom:5 });
-    const [type, setType]   = useState<'all'|'cuu_nguoi'|'nhu_yeu_pham'>('all');
-    const [q, setQ]         = useState('');
-    const [hidePOI, setHidePOI] = useState(false);
+const typeLabel = (t: 'all' | 'cuu_nguoi' | 'nhu_yeu_pham') =>
+  t === 'all' ? 'Tất cả' : t === 'cuu_nguoi' ? 'Cứu người' : 'Nhu yếu phẩm';
 
-    const [sheetOpen, setSheetOpen] = useState(false);
-    const [timeRange, setTimeRange] = useState<number|null>(null);
-    const [radius, setRadius] = useState<number>(50);
+export default function MapPage() {
+  const [points, setPoints] = useState<MapPoint[]>([]);
+  const [view, setView] = useState<{ center: [number, number]; zoom: number }>({
+    center: [105.85, 21.03],
+    zoom: 5,
+  });
 
-    const [statusFilter, setStatusFilter] = useState<TrangThaiCode[]>(['tiep_nhan']);
+  const [type, setType] = useState<'all' | 'cuu_nguoi' | 'nhu_yeu_pham'>('all');
+  const [q, setQ] = useState('');
+  const [hidePOI, setHidePOI] = useState(false);
 
-    const [lightbox, setLightbox] = useState<{items:Media[], index:number} | null>(null);
-    const [selectedId, setSelectedId] = useState<number|null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [timeRange, setTimeRange] = useState<number | null>(null);
+  const [radius, setRadius] = useState<number>(50);
 
-    // 🔐 Theo "cách như menu trên": tự phát hiện đăng nhập bằng localStorage
-    const [authed, setAuthed] = useState(false);
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const check = () => setAuthed(!!localStorage.getItem('token'));
-        check();
-        window.addEventListener('storage', check); // sync giữa các tab
-        return () => window.removeEventListener('storage', check);
-    }, []);
+  const [statusFilter, setStatusFilter] = useState<TrangThaiCode[]>(['tiep_nhan']);
 
-    // Nếu KHÔNG đăng nhập, khóa bộ lọc trạng thái về 'tiep_nhan'
-    useEffect(() => {
-        if (!authed) setStatusFilter(['tiep_nhan']);
-    }, [authed]);
+  const [lightbox, setLightbox] = useState<{ items: Media[]; index: number } | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
-    const api = (path:string, init?:RequestInit)=> fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, init);
+  // 🔐 detect auth
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const check = () => setAuthed(!!localStorage.getItem('token'));
+    check();
+    window.addEventListener('storage', check);
+    return () => window.removeEventListener('storage', check);
+  }, []);
 
-    const load = async ()=>{
-        const qs = new URLSearchParams();
-        if (type!=='all') qs.set('loai', type);
-        if (q.trim()) qs.set('q', q.trim());
-        if (typeof timeRange === 'number' && timeRange > 0) qs.set('hours', String(timeRange));
-        qs.set('radius', String(radius));
-        qs.set('center', `${view.center[1]},${view.center[0]}`);
+  useEffect(() => {
+    if (!authed) setStatusFilter(['tiep_nhan']);
+  }, [authed]);
 
-        // chỉ member mới được truyền trạng thái đã chọn
-        const listStatus = authed ? statusFilter : ['tiep_nhan'];
-        qs.set('trang_thai', listStatus.join(','));
+  const api = (path: string, init?: RequestInit) => fetch(`/api${path}`, init);
 
-        const r = await api(`/yeucau?${qs.toString()}`, { cache:'no-store' });
-        const data = await r.json();
+  const load = async () => {
+    const qs = new URLSearchParams();
+    if (type !== 'all') qs.set('loai', type);
+    if (q.trim()) qs.set('q', q.trim());
+    if (typeof timeRange === 'number' && timeRange > 0) qs.set('hours', String(timeRange));
+    qs.set('radius', String(radius));
+    qs.set('center', `${view.center[1]},${view.center[0]}`);
 
-        const pts:MapPoint[] = (data?.data || data || []).map((it:any)=>({
-            id: it.id,
-            lat: it.lat, lng: it.lng,
-            loai: it.loai, trang_thai: it.trang_thai as TrangThaiCode,
-            ten: it.ten_nguoigui, sdt: it.sdt_nguoigui,
-            noidung: it.noidung, so_nguoi: it.so_nguoi,
-            vattu: (it.vattu||[]).map((v:any)=>({ ten:v.ten, so_luong:v.so_luong, don_vi:v.don_vi })),
-            media: (it.media||[]) as Media[],
-            createdAt: it.created_at || it.tao_luc || null,
-        }));
-        setPoints(pts);
-    };
+    const listStatus = authed ? statusFilter : ['tiep_nhan'];
+    qs.set('trang_thai', listStatus.join(','));
 
-    useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [type, timeRange, radius, statusFilter, authed]);
-    useEffect(()=>{
-        const t = setTimeout(()=> load(), 500);
-        return ()=> clearTimeout(t);
-        // eslint-disable-next-line
-    }, [q]);
+    const r = await api(`/yeucau?${qs.toString()}`, { cache: 'no-store' });
+    const data = await r.json();
 
-    const onSelect = (id:number)=> window.open(`/xemyeucau/${id}`, '_blank');
-    const focusAndOpen = (p:MapPoint)=>{ setView(v=>({ center:[p.lng,p.lat], zoom: Math.max(v.zoom, 14) })); setSelectedId(p.id); };
-    const statusLabel = (code:TrangThaiCode)=> STATUS_ENTRIES.find(s=>s.code===code)?.label || code;
-    const toggleStatus = (code:TrangThaiCode)=>{
-        if (!authed) return; // khách không được bật/tắt
-        setStatusFilter(prev=> prev.includes(code) ? prev.filter(x=>x!==code) as TrangThaiCode[] : [...prev, code] as TrangThaiCode[]);
-    };
+    const pts: MapPoint[] = (data?.data || data || []).map((it: any) => ({
+      id: it.id,
+      lat: it.lat,
+      lng: it.lng,
+      loai: it.loai,
+      trang_thai: it.trang_thai as TrangThaiCode,
+      ten: it.ten_nguoigui,
+      sdt: it.sdt_nguoigui,
+      noidung: it.noidung,
+      so_nguoi: it.so_nguoi,
+      vattu: (it.vattu || []).map((v: any) => ({ ten: v.ten, so_luong: v.so_luong, don_vi: v.don_vi })),
+      media: (it.media || []) as Media[],
+      createdAt: it.created_at || it.tao_luc || null,
+    }));
 
-    return (
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_440px] gap-6">
-            {/* MAP */}
-            <div className="relative rounded-2xl overflow-hidden border">
-                <div className="absolute left-1/2 -translate-x-1/2 top-3 z-[5] flex gap-2 bg-white/90 backdrop-blur rounded-full p-1 shadow">
-                    {(['all','cuu_nguoi','nhu_yeu_pham'] as const).map(t=>(
-                        <button
-                            key={t}
-                            className={`px-3 py-1 rounded-full text-sm ${type===t?'bg-black text-white':'hover:bg-gray-100'}`}
-                            onClick={()=> setType(t)}
-                        >
-                            {t==='all'?'🛟 Tất cả':t==='cuu_nguoi'?' 🚑 Cứu người':'📦 Nhu yếu phẩm'}
-                        </button>
-                    ))}
-                </div>
+    setPoints(pts);
+  };
 
-                <MapView
-                    styleUrl={BASE}
-                    points={points}
-                    view={view}
-                    onViewChange={setView}
-                    onSelect={onSelect}
-                    hidePlaces={hidePOI}
-                    selectedId={selectedId}
-                    onOpenMedia={(items, index)=> setLightbox({ items, index })}
-                />
-            </div>
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line
+  }, [type, timeRange, radius, statusFilter, authed]);
 
-            {/* PANEL PHẢI */}
-            <div className="rounded-2xl border p-3 flex flex-col h-[calc(100vh-100px)]">
-                <div className="flex items-center gap-2">
-                    <Input
-                        placeholder="Tìm kiếm sự kiện..."
-                        value={q}
-                        onChange={(e)=>setQ(e.target.value)}
-                        onKeyDown={(e)=>{ if(e.key==='Enter'){ e.preventDefault(); load(); } }}
-                    />
+  useEffect(() => {
+    const t = setTimeout(() => load(), 450);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line
+  }, [q]);
 
-                    <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-                        <SheetTrigger asChild><Button variant="outline">Bộ lọc</Button></SheetTrigger>
-                        <SheetContent side="right" className="w-[420px] p-6">
-                            <SheetHeader><SheetTitle>Bộ lọc sự kiện</SheetTitle></SheetHeader>
-                            <div className="mt-4 grid gap-5">
+  const onSelect = (id: number) => window.open(`/xemyeucau/${id}`, '_blank');
 
-                                {/* Thời gian */}
-                                <div className="grid gap-2">
-                                    <div className="text-sm font-medium">Khoảng thời gian</div>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        <button
-                                            className={`px-3 py-2 rounded-lg border ${timeRange===null?'bg-black text-white border-black':''}`}
-                                            onClick={()=>setTimeRange(null)}
-                                        >Tất cả</button>
-                                        {[1,3,6,12,24,48,72].map(h=>(
-                                            <button key={h}
-                                                    className={`px-3 py-2 rounded-lg border ${timeRange===h?'bg-black text-white border-black':''}`}
-                                                    onClick={()=>setTimeRange(h)}
-                                            >{h} giờ</button>
-                                        ))}
-                                    </div>
-                                </div>
+  const focusAndOpen = (p: MapPoint) => {
+    setSelectedId(p.id);
+    setView((v) => ({ center: [p.lng, p.lat], zoom: Math.max(v.zoom, 14) }));
+  };
 
-                                {/* Khoảng cách */}
-                                <div className="grid gap-2">
-                                    <div className="text-sm font-medium">Khoảng cách</div>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {[1,5,10,50,100,200].map(km=>(
-                                            <button key={km}
-                                                    className={`px-3 py-2 rounded-lg border ${radius===km?'bg-black text-white border-black':''}`}
-                                                    onClick={()=>setRadius(km)}
-                                            >{km} km</button>
-                                        ))}
-                                    </div>
-                                    <div className="mt-1 text-xs text-gray-500">* Lọc theo bán kính từ vị trí bản đồ hiện tại.</div>
-                                </div>
+  const statusLabel = (code: TrangThaiCode) => STATUS_ENTRIES.find((s) => s.code === code)?.label || code;
+  const statusColor = (code: TrangThaiCode) => STATUS_ENTRIES.find((s) => s.code === code)?.color || '#111827';
 
-                                {/* 🔐 Trạng thái: chỉ tương tác khi đã đăng nhập */}
-                                <div className="grid gap-2">
-                                    <div className="text-sm font-medium flex items-center justify-between">
-                                        <span>Trạng thái</span>
-                                        {!authed && <span className="text-xs text-gray-500">Đăng nhập để lọc</span>}
-                                    </div>
+  const toggleStatus = (code: TrangThaiCode) => {
+    if (!authed) return;
+    setStatusFilter((prev) => (prev.includes(code) ? prev.filter((x) => x !== code) : [...prev, code]) as TrangThaiCode[]);
+  };
 
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {STATUS_ENTRIES.map(s=>(
-                                            <button
-                                                key={s.code}
-                                                className={`px-3 py-2 rounded-lg border text-left ${
-                                                    statusFilter.includes(s.code)?'bg-black text-white border-black':''
-                                                } ${!authed ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                                onClick={()=>toggleStatus(s.code)}
-                                                title={s.code}
-                                                disabled={!authed}
-                                            >
-                                                {s.label}
-                                            </button>
-                                        ))}
-                                    </div>
+  const activeTags = useMemo(() => {
+    const tags: string[] = [];
+    tags.push(typeLabel(type));
+    tags.push(timeRange !== null ? `${timeRange}h` : 'Tất cả thời gian');
+    tags.push(`${radius}km`);
+    tags.push(authed ? `TT: ${statusFilter.map(statusLabel).join(', ')}` : 'TT: Tiếp nhận');
+    if (hidePOI) tags.push('Ẩn POI');
+    return tags;
+  }, [type, timeRange, radius, statusFilter, authed, hidePOI]);
 
-                                    <div className="flex gap-2">
-                                        <Button variant="outline" size="sm" onClick={()=>setStatusFilter(['tiep_nhan'])}>
-                                            Chỉ “Tiếp nhận”
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={()=> authed
-                                                ? setStatusFilter(STATUS_ENTRIES.map(s=>s.code))
-                                                : setStatusFilter(['tiep_nhan'])
-                                            }
-                                            disabled={!authed}
-                                        >
-                                            Tất cả
-                                        </Button>
-                                    </div>
-                                </div>
-
-                                {/* Ẩn POI */}
-                                <div className="flex items-center justify-between border rounded-lg p-3">
-                                    <div>Ẩn địa điểm (Bệnh viện, Trạm xăng,…)</div>
-                                    <input type="checkbox" checked={hidePOI} onChange={(e)=>setHidePOI(e.target.checked)} />
-                                </div>
-
-                                <Button onClick={()=>{ setSheetOpen(false); load(); }}>Áp dụng</Button>
-                            </div>
-                        </SheetContent>
-                    </Sheet>
-                </div>
-
-                {/* Tags filter */}
-                <div className="mt-2 flex flex-wrap gap-2">
-                    <Badge variant="secondary">{type==='all'?'Tất cả': type==='cuu_nguoi'?'Cứu người':'Cứu trợ'}</Badge>
-                    {timeRange!==null ? <Badge variant="secondary">{timeRange}h</Badge> : <Badge variant="secondary">Tất cả</Badge>}
-                    <Badge variant="secondary">{radius} km</Badge>
-                    {authed
-                        ? <Badge variant="secondary">Trạng thái: {statusFilter.map(s=>STATUS_ENTRIES.find(x=>x.code===s)?.label).join(', ')}</Badge>
-                        : <Badge variant="secondary">Trạng thái: Tiếp nhận</Badge>}
-                    {hidePOI && <Badge variant="secondary">Ẩn POI</Badge>}
-                </div>
-
-                {/* LIST */}
-                <div className="mt-3 overflow-auto divide-y flex-1 pr-1">
-                    {points.map(p => (
-                        <div
-                            key={p.id}
-                            className="relative py-3 hover:bg-gray-50 rounded-lg transition cursor-pointer"
-                            title="Bấm để xem trên bản đồ"
-                            onClick={() => focusAndOpen(p)}
-                        >
-                            {/* góc phải */}
-                            <div className="absolute right-0 top-2 flex items-center gap-1">
-                <span
-                    className="inline-flex items-center px-2 py-[2px] rounded-full text-white text-[12px]"
-                    style={{
-                        background:
-                            p.trang_thai === 'tiep_nhan' ? '#0ea5e9' :
-                                p.trang_thai === 'dang_xu_ly' ? '#f59e0b' :
-                                    p.trang_thai === 'da_chuyen_cum' ? '#6366f1' :
-                                        p.trang_thai === 'da_hoan_thanh' ? '#10b981' : '#ef4444',
-                    }}
-                >
-                  {statusLabel(p.trang_thai)}
-                </span>
-
-                                <Button size="icon" variant="ghost" title="Xem trên bản đồ"
-                                        onClick={(e) => { e.stopPropagation(); focusAndOpen(p); }}>
-                                    <MapPin className="h-5 w-5" />
-                                </Button>
-
-                                {/* 🔒 Chỉ admin mới thấy nút Chi tiết */}
-                                {IS_ADMIN && (
-                                    <Button size="icon" variant="ghost" title="Chi tiết"
-                                            onClick={(e) => { e.stopPropagation(); onSelect(p.id); }}>
-                                        <SquareArrowOutUpRight className="h-5 w-5" />
-                                    </Button>
-                                )}
-                            </div>
-
-                            {/* dòng trên */}
-                            <div className="text-[12px] text-gray-500 flex items-center gap-2 flex-wrap">
-                                <span>#{p.id}</span>
-                                <span className="inline-flex items-center px-2 py-[2px] rounded-full text-white text-[12px]"
-                                      style={{ background: p.loai === 'cuu_nguoi' ? '#ef4444' : '#2563eb' }}>
-                  {p.loai === 'cuu_nguoi' ? 'Cứu người' : 'Cứu trợ'}
-                </span>
-                                {!!p.createdAt && <span>• {timeAgo(p.createdAt)}</span>}
-                            </div>
-
-                            <div className="mt-1 text-[15px] font-semibold leading-5">
-                                {p.noidung || '(Không có nội dung)'}
-                            </div>
-
-                            <div className="pr-28 mt-1 text-sm text-gray-600">
-                                {p.ten || '—'} • {p.sdt || '—'} • {p.so_nguoi || 0} người
-                            </div>
-
-                            {p.media?.length ? (
-                                <div className="mt-2 grid grid-cols-3 gap-2 pr-28">
-                                    {p.media.map((m: any, idx: number) => {
-                                        const key = m.id ?? m.media_id ?? m.url ?? m.duong_dan ?? `idx-${idx}`;
-                                        return m.type === 'image' ? (
-                                            <button
-                                                key={key}
-                                                onClick={(e) => { e.stopPropagation(); setLightbox({ items: p.media!, index: idx }); }}
-                                            >
-                                                <Image
-                                                    src={m.url}
-                                                    alt=""
-                                                    width={600}
-                                                    height={400}
-                                                    className="w-full h-24 object-cover rounded-md"
-                                                />
-                                            </button>
-                                        ) : (
-                                            <button
-                                                key={key}
-                                                onClick={(e) => { e.stopPropagation(); setLightbox({ items: p.media!, index: idx }); }}
-                                                className="w-full h-24 bg-black/5 rounded-md grid place-items-center text-xs"
-                                            >
-                                                Xem video
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            ) : null}
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* LIGHTBOX */}
-            {lightbox && (
-                <div className="fixed inset-0 bg-black/70 z-[60] grid place-items-center p-4" onClick={()=>setLightbox(null)}>
-                    <div className="max-w-4xl w-full" onClick={e=>e.stopPropagation()}>
-                        {lightbox.items[lightbox.index].type==='image'
-                            ? <Image src={lightbox.items[lightbox.index].url} alt="" width={1600} height={1000} className="w-full h-auto rounded-lg" />
-                            : <video src={lightbox.items[lightbox.index].url} controls className="w-full rounded-lg" />}
-                        <div className="flex justify-between mt-3">
-                            <Button variant="outline" onClick={()=> setLightbox(v=> v ? ({...v, index: (v.index-1+v.items.length)%v.items.length}) : v)}>Trước</Button>
-                            <Button variant="outline" onClick={()=> setLightbox(v=> v ? ({...v, index: (v.index+1)%v.items.length}) : v)}>Sau</Button>
-                            <Button onClick={()=>setLightbox(null)}>Đóng</Button>
-                        </div>
-                    </div>
-                </div>
-            )}
+  /** ====== UI blocks ====== */
+  const FilterContent = (
+    <div className="mt-4 grid gap-6">
+      {/* time */}
+      <div className="grid gap-2">
+        <div className="text-sm font-semibold">Khoảng thời gian</div>
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            className={`px-3 py-2 rounded-lg border text-sm ${
+              timeRange === null ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
+            }`}
+            onClick={() => setTimeRange(null)}
+          >
+            Tất cả
+          </button>
+          {[1, 3, 6, 12, 24, 48, 72].map((h) => (
+            <button
+              key={h}
+              className={`px-3 py-2 rounded-lg border text-sm ${
+                timeRange === h ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
+              }`}
+              onClick={() => setTimeRange(h)}
+            >
+              {h} giờ
+            </button>
+          ))}
         </div>
-    );
+      </div>
+
+      {/* radius */}
+      <div className="grid gap-2">
+        <div className="text-sm font-semibold">Bán kính</div>
+        <div className="grid grid-cols-3 gap-2">
+          {[1, 5, 10, 50, 100, 200].map((km) => (
+            <button
+              key={km}
+              className={`px-3 py-2 rounded-lg border text-sm ${
+                radius === km ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
+              }`}
+              onClick={() => setRadius(km)}
+            >
+              {km} km
+            </button>
+          ))}
+        </div>
+        <div className="text-xs text-gray-500">* Lọc theo bán kính từ tâm bản đồ hiện tại.</div>
+      </div>
+
+      {/* status */}
+      <div className="grid gap-2">
+        <div className="text-sm font-semibold flex items-center justify-between">
+          <span>Trạng thái</span>
+          {!authed && <span className="text-xs text-gray-500">Đăng nhập để lọc</span>}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {STATUS_ENTRIES.map((s) => (
+            <button
+              key={s.code}
+              className={`px-3 py-2 rounded-lg border text-left text-sm ${
+                statusFilter.includes(s.code) ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
+              } ${!authed ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
+              onClick={() => toggleStatus(s.code)}
+              disabled={!authed}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setStatusFilter(['tiep_nhan'])}>
+            Chỉ “Tiếp nhận”
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => (authed ? setStatusFilter(STATUS_ENTRIES.map((s) => s.code)) : setStatusFilter(['tiep_nhan']))}
+            disabled={!authed}
+          >
+            Tất cả
+          </Button>
+        </div>
+      </div>
+
+      {/* POI */}
+      <div className="flex items-center justify-between border rounded-lg p-3">
+        <div className="text-sm">Ẩn POI (bệnh viện, trạm xăng,…)</div>
+        <input type="checkbox" checked={hidePOI} onChange={(e) => setHidePOI(e.target.checked)} />
+      </div>
+
+      <Button
+        onClick={() => {
+          setSheetOpen(false);
+          load();
+        }}
+      >
+        Áp dụng
+      </Button>
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6">
+      {/* LEFT: MAP */}
+      <div className="relative rounded-2xl overflow-hidden border bg-white">
+        {/* Top controls */}
+        <div className="absolute left-4 right-4 top-4 z-[5] flex flex-col gap-3">
+          {/* row 1 */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1 relative">
+              <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                className="pl-9 bg-white/90 backdrop-blur"
+                placeholder="Tìm theo nội dung / tên / sđt..."
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    load();
+                  }
+                }}
+              />
+              {q && (
+                <button
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-gray-100"
+                  onClick={() => setQ('')}
+                  title="Xóa"
+                >
+                  <X className="h-4 w-4 text-gray-500" />
+                </button>
+              )}
+            </div>
+
+            <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" className="bg-white/90 backdrop-blur">
+                  <Filter className="h-4 w-4 mr-2" />
+                  Bộ lọc
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-[420px] p-6">
+                <SheetHeader>
+                  <SheetTitle>Bộ lọc sự kiện</SheetTitle>
+                </SheetHeader>
+                {FilterContent}
+              </SheetContent>
+            </Sheet>
+          </div>
+
+          {/* row 2: segmented type */}
+          <div className="inline-flex w-fit rounded-xl border bg-white/90 backdrop-blur p-1 shadow-sm">
+            {(['all', 'cuu_nguoi', 'nhu_yeu_pham'] as const).map((t) => (
+              <button
+                key={t}
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${
+                  type === t ? 'bg-black text-white' : 'hover:bg-gray-100'
+                }`}
+                onClick={() => setType(t)}
+              >
+                {t === 'all' ? '🛟 Tất cả' : t === 'cuu_nguoi' ? '🚑 Cứu người' : '📦 Nhu yếu phẩm'}
+              </button>
+            ))}
+          </div>
+
+          {/* row 3: tags */}
+          <div className="flex flex-wrap gap-2">
+            {activeTags.slice(0, 5).map((t) => (
+              <Badge key={t} variant="secondary" className="bg-white/90 backdrop-blur">
+                {t}
+              </Badge>
+            ))}
+          </div>
+        </div>
+
+        <MapView
+          styleUrl={BASE}
+          points={points}
+          view={view}
+          onViewChange={setView}
+          onSelect={onSelect}
+          hidePlaces={hidePOI}
+          selectedId={selectedId}
+          onOpenMedia={(items, index) => setLightbox({ items, index })}
+        />
+      </div>
+
+      {/* RIGHT: LIST PANEL */}
+      <div className="rounded-2xl border bg-white p-3 flex flex-col h-[calc(100vh-100px)]">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-lg font-bold">Danh sách</div>
+            <div className="text-xs text-gray-500">{points.length} sự kiện</div>
+          </div>
+
+          {/* Mobile only: open filter drawer quickly */}
+          <div className="lg:hidden">
+            <Button variant="outline" size="sm" onClick={() => setSheetOpen(true)}>
+              <Filter className="h-4 w-4 mr-2" />
+              Lọc
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-3 overflow-auto flex-1 pr-1 space-y-2">
+          {points.map((p) => {
+            const isActive = selectedId === p.id;
+            const media = p.media || [];
+            const showThumb = media.slice(0, 2);
+
+            return (
+              <div
+                key={p.id}
+                className={`rounded-xl border p-3 transition cursor-pointer hover:bg-gray-50 ${
+                  isActive ? 'border-black ring-1 ring-black' : 'border-gray-200'
+                }`}
+                onClick={() => focusAndOpen(p)}
+              >
+                {/* header row */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-gray-500">#{p.id}</span>
+
+                      <span
+                        className="inline-flex items-center px-2 py-[2px] rounded-full text-white text-[12px] font-semibold"
+                        style={{ background: p.loai === 'cuu_nguoi' ? '#ef4444' : '#2563eb' }}
+                      >
+                        {p.loai === 'cuu_nguoi' ? 'Cứu người' : 'Cứu trợ'}
+                      </span>
+
+                      <span
+                        className="inline-flex items-center px-2 py-[2px] rounded-full text-white text-[12px] font-semibold"
+                        style={{ background: statusColor(p.trang_thai) }}
+                      >
+                        {statusLabel(p.trang_thai)}
+                      </span>
+
+                      {!!p.createdAt && <span className="text-xs text-gray-500">• {timeAgo(p.createdAt)}</span>}
+                    </div>
+
+                    <div className="mt-1 font-semibold leading-5 line-clamp-2">
+                      {p.noidung || '(Không có nội dung)'}
+                    </div>
+
+                    <div className="mt-1 text-sm text-gray-600 line-clamp-1">
+                      {p.ten || '—'} • {p.sdt || '—'} • {p.so_nguoi || 0} người
+                    </div>
+                  </div>
+
+                  {/* actions */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title="Xem trên bản đồ"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        focusAndOpen(p);
+                      }}
+                    >
+                      <MapPin className="h-5 w-5" />
+                    </Button>
+
+                    {IS_ADMIN && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        title="Chi tiết"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelect(p.id);
+                        }}
+                      >
+                        <SquareArrowOutUpRight className="h-5 w-5" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* media thumbs (gọn) */}
+                {media.length ? (
+                  <div className="mt-3 flex items-center gap-2">
+                    {showThumb.map((m: any, idx: number) => {
+                      const key = m.id ?? m.media_id ?? m.url ?? `idx-${idx}`;
+                      return m.type === 'image' ? (
+                        <button
+                          key={key}
+                          className="relative"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLightbox({ items: media, index: idx });
+                          }}
+                        >
+                          <Image
+                            src={m.url}
+                            alt=""
+                            width={400}
+                            height={260}
+                            className="w-24 h-16 object-cover rounded-lg border"
+                          />
+                        </button>
+                      ) : (
+                        <button
+                          key={key}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLightbox({ items: media, index: idx });
+                          }}
+                          className="w-24 h-16 rounded-lg border bg-black/5 grid place-items-center text-xs font-semibold"
+                        >
+                          Video
+                        </button>
+                      );
+                    })}
+
+                    {media.length > 2 && (
+                      <span className="text-xs text-gray-500">+{media.length - 2}</span>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* LIGHTBOX */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 bg-black/70 z-[60] grid place-items-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <div className="max-w-4xl w-full" onClick={(e) => e.stopPropagation()}>
+            {lightbox.items[lightbox.index].type === 'image' ? (
+              <Image
+                src={lightbox.items[lightbox.index].url}
+                alt=""
+                width={1600}
+                height={1000}
+                className="w-full h-auto rounded-lg"
+              />
+            ) : (
+              <video src={lightbox.items[lightbox.index].url} controls className="w-full rounded-lg" />
+            )}
+
+            <div className="flex justify-between mt-3 gap-2">
+              <Button
+                variant="outline"
+                onClick={() =>
+                  setLightbox((v) =>
+                    v ? { ...v, index: (v.index - 1 + v.items.length) % v.items.length } : v
+                  )
+                }
+              >
+                Trước
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  setLightbox((v) => (v ? { ...v, index: (v.index + 1) % v.items.length } : v))
+                }
+              >
+                Sau
+              </Button>
+              <Button onClick={() => setLightbox(null)}>Đóng</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

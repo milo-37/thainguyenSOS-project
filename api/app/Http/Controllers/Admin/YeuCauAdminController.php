@@ -139,30 +139,51 @@ class YeuCauAdminController extends Controller
         };
     }
     public function claim($id)
-    {
-        $yc = \App\Models\YeuCau::findOrFail($id);
-        $userId = auth()->id();
+{
+    $userId = auth()->id();
 
-        // gán cho người nhận (chính mình)
-        $yc->assigned_user_id = $userId;
+    return DB::transaction(function () use ($id, $userId) {
+        // khóa record để tránh 2 người claim cùng lúc
+        $yc = YeuCau::lockForUpdate()->findOrFail($id);
+
+        // nếu đã có người khác nhận thì chặn
+        if (!empty($yc->duoc_giao_cho) && (int)$yc->duoc_giao_cho !== (int)$userId) {
+            return response()->json([
+                'ok' => 0,
+                'message' => 'Yêu cầu này đã được người khác nhận xử lý.',
+                'duoc_giao_cho' => $yc->duoc_giao_cho,
+            ], 409);
+        }
+
+        $from = $yc->trang_thai;
+
+        // gán cho chính mình
+        $yc->duoc_giao_cho = $userId;
+        $yc->cum_id = null; // claim về cá nhân thì bỏ cụm (tuỳ logic)
+
+        // đổi trạng thái nếu đang tiếp nhận
         if ($yc->trang_thai === 'tiep_nhan') {
             $yc->trang_thai = 'dang_xu_ly';
         }
+
         $yc->save();
 
-        // lưu nhật ký
-        \DB::table('yeu_cau_nhatky')->insert([
-            'yeu_cau_id' => $yc->id,
-            'thuc_hien_boi' => $userId,
-            'hanh_dong' => 'nhan_xu_ly',
-            'tu_trangthai' => 'tiep_nhan',
-            'den_trangthai'=> $yc->trang_thai,
-            'ghi_chu' => 'Người dùng tự nhận xử lý',
-            'created_at' => now(),
-            'updated_at' => now(),
+        // lưu nhật ký (đúng schema: có tao_luc, không có created_at/updated_at)
+        DB::table('yeu_cau_nhatky')->insert([
+            'yeu_cau_id'     => $yc->id,
+            'thuc_hien_boi'  => $userId,
+            'hanh_dong'      => 'nhan_xu_ly',
+            'tu_trangthai'   => $from,
+            'den_trangthai'  => $yc->trang_thai,
+            'tu_nguoi'       => null,
+            'den_nguoi'      => $userId,
+            'ghichu'         => 'Người dùng tự nhận xử lý',
+            'tao_luc'        => now(),
         ]);
 
         return response()->json(['ok' => 1, 'data' => $yc]);
-    }
+    });
+}
+
 
 }

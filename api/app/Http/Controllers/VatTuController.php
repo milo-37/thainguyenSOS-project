@@ -20,11 +20,11 @@ class VatTuController extends Controller
         $perPage  = max(1, min((int)$req->query('per_page', 20), 100));
 
         // Subquery tồn kho theo vật tư
-        $subTon = \DB::table('kho_ton')
+        $subTon = DB::table('kho_ton')
             ->selectRaw('vattu_id, SUM(so_luong) AS ton')   // ✅ vattu_id
             ->groupBy('vattu_id');
 
-        $subCan = \DB::table('yeu_cau_vattu AS yct')
+        $subCan = DB::table('yeu_cau_vattu AS yct')
             ->join('yeu_cau AS yc', 'yc.id', '=', 'yct.yeu_cau_id')
             ->where('yc.trang_thai', 'tiep_nhan')
             ->selectRaw('yct.vattu_id, SUM(yct.so_luong) AS can')

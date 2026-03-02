@@ -4,10 +4,11 @@ import Image from 'next/image';
 
 // ===== API
 async function getDetail(id: string) {
-    const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/xemyeucau/${id}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('Không lấy được chi tiết');
-    return r.json();
+  const r = await fetch(`/api/xemyeucau/${id}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error('Không lấy được chi tiết');
+  return r.json();
 }
+
 
 // ===== Lightbox (ảnh / video)
 function Lightbox({
@@ -190,7 +191,7 @@ function StatusBadge({ value }: { value: string }) {
     const map: Record<string, { label: string; color: string }> = {
         tiep_nhan: { label: 'Tiếp nhận', color: 'bg-blue-500' },
         dang_xu_ly: { label: 'Đang xử lý', color: 'bg-amber-500' },
-        hoan_thanh: { label: 'Hoàn thành', color: 'bg-emerald-500' },
+        da_hoan_thanh: { label: 'Hoàn thành', color: 'bg-emerald-500' },
         huy: { label: 'Hủy', color: 'bg-rose-500' },
     };
     const it = map[value] ?? { label: value, color: 'bg-gray-500' };
