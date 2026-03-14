@@ -18,7 +18,6 @@ return new class extends Migration
                 $table->timestamps();
             });
         } else {
-            // Bảng đã có sẵn (như ảnh bạn chụp). Bổ sung các cột còn thiếu.
             Schema::table('kho', function (Blueprint $table) {
                 if (!Schema::hasColumn('kho', 'mo_ta')) {
                     $table->text('mo_ta')->nullable()->after('ten');

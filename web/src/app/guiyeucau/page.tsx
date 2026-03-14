@@ -17,15 +17,30 @@ const STYLE = process.env.NEXT_PUBLIC_VIETMAP_STYLE_BASE!;
 function parseGoogleMaps(url: string): { lat: number; lng: number } | null {
   try {
     const u = new URL(url);
-    const at = u.pathname.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
-    if (at) return { lat: parseFloat(at[1]), lng: parseFloat(at[2]) };
 
+    // 1) /@lat,lng
+    const at = u.pathname.match(/@(-?\d+(\.\d+)?),(-?\d+(\.\d+)?)/);
+    if (at) return { lat: parseFloat(at[1]), lng: parseFloat(at[3]) };
+
+    // 2) data=...!3dLAT!4dLNG...
+    const full = u.href;
+    const d3d4d = full.match(/!3d(-?\d+(\.\d+)?)!4d(-?\d+(\.\d+)?)/);
+    if (d3d4d) return { lat: parseFloat(d3d4d[1]), lng: parseFloat(d3d4d[3]) };
+
+    // 3) ?q=lat,lng
     const q = u.searchParams.get("q");
     if (q) {
-      const [lat, lng] = q.split(",").map(Number);
-      if (!Number.isNaN(lat) && !Number.isNaN(lng)) return { lat, lng };
+      const m = q.match(/(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)/);
+      if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[3]) };
     }
-  } catch { }
+
+    // 4) ?ll=lat,lng
+    const ll = u.searchParams.get("ll");
+    if (ll) {
+      const m = ll.match(/(-?\d+(\.\d+)?),\s*(-?\d+(\.\d+)?)/);
+      if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[3]) };
+    }
+  } catch {}
   return null;
 }
 

@@ -112,6 +112,22 @@ function highlight(text: string, keyword: string) {
   }
 }
 
+function formatDateTimeVN(dateStr?: string) {
+  if (!dateStr) return '—';
+
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '—';
+
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(d);
+}
+
 export default function YeuCauPage() {
   const [items, setItems] = useState<any[]>([]);
   const [q, setQ] = useState('');
@@ -262,10 +278,10 @@ export default function YeuCauPage() {
                       <span className="text-sm font-semibold">#{id}</span>
                       <StatusBadge status={status} />
                       {!!createdAt && (
-                        <span className="text-xs text-gray-500">
-                          • {timeAgo(createdAt)} trước
-                        </span>
-                      )}
+  <span className="text-xs text-gray-500">
+    • {formatDateTimeVN(createdAt)} ({timeAgo(createdAt)} trước)
+  </span>
+)}
                     </div>
 
                     {/* line 2 */}

@@ -30,6 +30,8 @@ const emptyForm: FormState = {
 };
 
 function normalizeCluster(raw: any): Partial<FormState> {
+  const chiHuyId = raw?.chi_huy_id != null ? String(raw.chi_huy_id) : null;
+
   const memberIdsRaw =
     raw?.thanh_vien_ids ??
     raw?.member_ids ??
@@ -39,14 +41,18 @@ function normalizeCluster(raw: any): Partial<FormState> {
     [];
 
   const memberIds = Array.from(
-  new Set<string>((memberIdsRaw || []).map((x: unknown) => String(x)))
-);
-
+    new Set<string>(
+      [
+        ...(memberIdsRaw || []).map((x: unknown) => String(x)),
+        ...(chiHuyId ? [chiHuyId] : []),
+      ]
+    )
+  );
 
   return {
     ten: raw?.ten ?? '',
     mo_ta: raw?.mo_ta ?? '',
-    chi_huy_id: raw?.chi_huy_id != null ? String(raw.chi_huy_id) : null,
+    chi_huy_id: chiHuyId,
     thanh_vien_ids: memberIds,
     lat: raw?.lat ?? null,
     lng: raw?.lng ?? null,
@@ -102,28 +108,28 @@ export default function ClusterForm() {
   }, [id]);
 
   const fetchUsers = async () => {
-    try {
-      if (!API) throw new Error('Missing NEXT_PUBLIC_API_URL. Check .env.local then restart dev server.');
+  try {
+    if (!API) throw new Error('Missing NEXT_PUBLIC_API_URL. Check .env.local then restart dev server.');
 
-      setLoadingUsers(true);
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API}/users`, {
-        headers: {
-          Authorization: `Bearer ${token ?? ''}`,
-          Accept: 'application/json',
-        },
-        cache: 'no-store',
-      });
+    setLoadingUsers(true);
+    const token = localStorage.getItem('token');
+    const res = await fetch(`${API}/users`, {
+      headers: {
+        Authorization: `Bearer ${token ?? ''}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    });
 
-      if (!res.ok) throw new Error(await res.text());
-      const d = await res.json();
-      setUsers(d.data || d);
-    } catch (err) {
-      console.error('Load users failed', err);
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
+    if (!res.ok) throw new Error(await res.text());
+    const d = await res.json();
+    setUsers(d?.data ?? []);
+  } catch (err) {
+    console.error('Load users failed', err);
+  } finally {
+    setLoadingUsers(false);
+  }
+};
 
   const selectedUsers = useMemo(() => {
     const set = new Set(form.thanh_vien_ids);
@@ -204,7 +210,7 @@ export default function ClusterForm() {
             <div className="text-muted-foreground">
               Chỉ huy: <span className="text-gray-900">{commander?.name ?? 'Chưa chọn'}</span> ·{' '}
               Thành viên: <span className="text-gray-900">{selectedUsers.length}</span> ·{' '}
-              Vị trí: <span className="text-gray-900">{form.lat && form.lng ? 'Đã chọn' : 'Chưa chọn'}</span>
+              Vị trí: <span className="text-gray-900">{form.lat != null && form.lng != null ? 'Đã chọn' : 'Chưa chọn'}</span>
             </div>
           </div>
 
@@ -258,16 +264,25 @@ export default function ClusterForm() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Chỉ huy cụm</label>
                   <select
-                    className="border rounded-lg h-10 px-3 w-full bg-white"
-                    value={form.chi_huy_id ?? ''}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        chi_huy_id: e.target.value || null,
-                      }))
-                    }
-                    disabled={loadingUsers}
-                  >
+  className="border rounded-lg h-10 px-3 w-full bg-white"
+  value={form.chi_huy_id ?? ''}
+  onChange={(e) => {
+    const value = e.target.value || null;
+
+    setForm((prev) => {
+      const nextMemberIds = value
+        ? Array.from(new Set([...prev.thanh_vien_ids, value]))
+        : prev.thanh_vien_ids;
+
+      return {
+        ...prev,
+        chi_huy_id: value,
+        thanh_vien_ids: nextMemberIds,
+      };
+    });
+  }}
+  disabled={loadingUsers}
+>
                     <option value="">
                       {loadingUsers ? 'Đang tải danh sách...' : '-- Chọn --'}
                     </option>
@@ -293,11 +308,19 @@ export default function ClusterForm() {
             >
               <div className="flex items-center justify-between gap-3">
                 <MemberSheet
-                  users={users}
-                  valueIds={form.thanh_vien_ids?.map(String) || []}
-                  onChange={(ids) => setForm((prev: any) => ({ ...prev, thanh_vien_ids: ids }))}
-                  triggerLabel={loadingUsers ? 'Đang tải...' : 'Chọn thành viên'}
-                />
+  users={users}
+  valueIds={form.thanh_vien_ids?.map(String) || []}
+  onChange={(ids) =>
+    setForm((prev: any) => {
+      const nextIds = prev.chi_huy_id
+        ? Array.from(new Set([...ids, String(prev.chi_huy_id)]))
+        : ids;
+
+      return { ...prev, thanh_vien_ids: nextIds };
+    })
+  }
+  triggerLabel={loadingUsers ? 'Đang tải...' : 'Chọn thành viên'}
+/>
 
                 <Button type="button" variant="ghost" onClick={fetchUsers} disabled={loadingUsers}>
                   Làm mới
@@ -344,29 +367,33 @@ export default function ClusterForm() {
                   <div>
                     <label className="text-xs text-muted-foreground">Vĩ độ (lat)</label>
                     <Input
-                      value={form.lat ?? ''}
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          lat: e.target.value ? +e.target.value : null,
-                        }))
-                      }
-                      placeholder="21.0278"
-                    />
+  value={form.lat ?? ''}
+  onChange={(e) => {
+    const val = e.target.value.trim();
+
+    setForm((prev) => ({
+      ...prev,
+      lat: val === '' ? null : Number.isNaN(Number(val)) ? prev.lat : Number(val),
+    }));
+  }}
+  placeholder="21.0278"
+/>
                   </div>
 
                   <div>
                     <label className="text-xs text-muted-foreground">Kinh độ (lng)</label>
                     <Input
-                      value={form.lng ?? ''}
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          lng: e.target.value ? +e.target.value : null,
-                        }))
-                      }
-                      placeholder="105.8342"
-                    />
+  value={form.lng ?? ''}
+  onChange={(e) => {
+    const val = e.target.value.trim();
+
+    setForm((prev) => ({
+      ...prev,
+      lng: val === '' ? null : Number.isNaN(Number(val)) ? prev.lng : Number(val),
+    }));
+  }}
+  placeholder="105.8342"
+/>
                   </div>
 
                   <div>

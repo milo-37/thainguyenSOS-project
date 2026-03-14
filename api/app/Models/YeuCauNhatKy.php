@@ -7,12 +7,12 @@ use Illuminate\Database\Eloquent\Model;
 class YeuCauNhatKy extends Model
 {
     protected $table = 'yeu_cau_nhatky';
-    public $timestamps = false; // bảng đang dùng cột 'tao_luc'
+    public $timestamps = false;
 
     protected $fillable = [
         'yeu_cau_id',
-        'thuc_hien_boi', // user id
-        'hanh_dong',     // created | doi_trang_thai | chuyen_xu_ly ...
+        'thuc_hien_boi',
+        'hanh_dong',
         'tu_trangthai',
         'den_trangthai',
         'tu_nguoi',
