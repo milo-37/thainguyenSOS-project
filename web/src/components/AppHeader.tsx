@@ -1,6 +1,7 @@
 'use client';
 
 import Link from "next/link";
+import { MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +38,6 @@ export default function AppHeader() {
   };
 
   const nav = [
-    { href: "/", label: "Trang chủ" },
     { href: "/map", label: "Bản đồ", icon: <MapIcon size={16} /> },
     { href: "/guiyeucau", label: "Gửi yêu cầu" },
   ];
@@ -78,19 +78,34 @@ export default function AppHeader() {
     <header className="sticky top-0 z-50 border-b bg-white/90 backdrop-blur">
       <div className="h-16 flex items-center justify-between px-4 md:px-6 lg:px-8">
         {/* Brand */}
-        <Link href="/" className="flex items-center gap-2 min-w-0">
-          <div className="size-9 shrink-0 rounded-full bg-black text-white grid place-items-center font-bold">
-            C
-          </div>
-          <div className="min-w-0">
-            <div className="font-semibold text-gray-900 leading-tight truncate">
-              Cứu hộ Thái Nguyên
-            </div>
-            <div className="text-xs text-gray-500 leading-tight hidden sm:block truncate">
-              Điều phối cứu trợ & yêu cầu hỗ trợ
-            </div>
-          </div>
-        </Link>
+        <Link href="/" className="flex items-center gap-3 min-w-0">
+  <div className="size-10 shrink-0 rounded-full bg-emerald-700 flex items-center justify-center shadow-sm">
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+      <path
+        d="M4 15C6 13.5 8 13.5 10 15C12 16.5 14 16.5 16 15C18 13.5 20 13.5 22 15"
+        stroke="white"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M5 11C7 9.8 9 9.8 11 11C13 12.2 15 12.2 17 11C19 9.8 21 9.8 23 11"
+        stroke="white"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <circle cx="7" cy="7" r="1.6" fill="#ef4444" />
+    </svg>
+  </div>
+
+  <div className="min-w-0">
+    <div className="font-semibold text-gray-900 leading-tight truncate">
+      Thái Nguyên SOS
+    </div>
+    <div className="text-xs text-gray-500 leading-tight hidden sm:block truncate">
+      Điều phối cứu trợ & yêu cầu hỗ trợ
+    </div>
+  </div>
+</Link>
 
         {/* Desktop nav */}
         <NavLinks />

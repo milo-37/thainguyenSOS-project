@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
-import Image from 'next/image';
 import { Filter, MapPin, Search, SquareArrowOutUpRight, X } from 'lucide-react';
 
 const BASE = process.env.NEXT_PUBLIC_VIETMAP_STYLE_BASE!;
@@ -57,12 +56,14 @@ export default function MapPage() {
   const [lightbox, setLightbox] = useState<{ items: Media[]; index: number } | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  // 🔐 detect auth
   const [authed, setAuthed] = useState(false);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
+
     const check = () => setAuthed(!!localStorage.getItem('token'));
     check();
+
     window.addEventListener('storage', check);
     return () => window.removeEventListener('storage', check);
   }, []);
@@ -75,11 +76,14 @@ export default function MapPage() {
 
   const load = async () => {
     const qs = new URLSearchParams();
+
     if (type !== 'all') qs.set('loai', type);
     if (q.trim()) qs.set('q', q.trim());
     if (typeof timeRange === 'number' && timeRange > 0) qs.set('hours', String(timeRange));
-    qs.set('radius', String(radius));
-    qs.set('center', `${view.center[1]},${view.center[0]}`);
+
+    qs.set('radius_km', String(radius));
+    qs.set('center_lat', String(view.center[1]));
+    qs.set('center_lng', String(view.center[0]));
 
     const listStatus = authed ? statusFilter : ['tiep_nhan'];
     qs.set('trang_thai', listStatus.join(','));
@@ -88,17 +92,34 @@ export default function MapPage() {
     const data = await r.json();
 
     const pts: MapPoint[] = (data?.data || data || []).map((it: any) => ({
-      id: it.id,
-      lat: it.lat,
-      lng: it.lng,
-      loai: it.loai,
-      trang_thai: it.trang_thai as TrangThaiCode,
-      ten: it.ten_nguoigui,
-      sdt: it.sdt_nguoigui,
-      noidung: it.noidung,
-      so_nguoi: it.so_nguoi,
-      vattu: (it.vattu || []).map((v: any) => ({ ten: v.ten, so_luong: v.so_luong, don_vi: v.don_vi })),
-      media: (it.media || []) as Media[],
+      id: Number(it.id),
+      lat: Number(it.lat),
+      lng: Number(it.lng),
+      loai: it.loai === 'nhu_yeu_pham' ? 'nhu_yeu_pham' : 'cuu_nguoi',
+      trang_thai: (it.trang_thai || 'tiep_nhan') as TrangThaiCode,
+      ten: it.ten_nguoigui || it.ten || '',
+      sdt: it.sdt_nguoigui || it.so_dien_thoai || '',
+      noidung: it.noidung || it.noi_dung || '',
+      so_nguoi: it.so_nguoi || it.songuoi || 0,
+      vattu: (it.vattu || it.vattu_chi_tiet || []).map((v: any) => ({
+        ten: v.ten || v?.vattu?.ten || 'Vật tư',
+        so_luong: v.so_luong,
+        don_vi: v.don_vi || v?.vattu?.don_vi || '',
+      })),
+      media: (it.media || [])
+        .map((m: any) => {
+          const mediaType: 'image' | 'video' =
+            m.type === 'image' || (m.mime || '').startsWith('image/')
+              ? 'image'
+              : 'video';
+
+          return {
+            id: m.id ?? m.media_id,
+            type: mediaType,
+            url: m.url || m.file_url || m.path || m.duong_dan || '',
+          };
+        })
+        .filter((m: any) => !!m.url),
       createdAt: it.created_at || it.tao_luc || null,
     }));
 
@@ -107,13 +128,13 @@ export default function MapPage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, timeRange, radius, statusFilter, authed]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), 450);
     return () => clearTimeout(t);
-    // eslint-disable-next-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
   const onSelect = (id: number) => window.open(`/xemyeucau/${id}`, '_blank');
@@ -123,12 +144,17 @@ export default function MapPage() {
     setView((v) => ({ center: [p.lng, p.lat], zoom: Math.max(v.zoom, 14) }));
   };
 
-  const statusLabel = (code: TrangThaiCode) => STATUS_ENTRIES.find((s) => s.code === code)?.label || code;
-  const statusColor = (code: TrangThaiCode) => STATUS_ENTRIES.find((s) => s.code === code)?.color || '#111827';
+  const statusLabel = (code: TrangThaiCode) =>
+    STATUS_ENTRIES.find((s) => s.code === code)?.label || code;
+
+  const statusColor = (code: TrangThaiCode) =>
+    STATUS_ENTRIES.find((s) => s.code === code)?.color || '#111827';
 
   const toggleStatus = (code: TrangThaiCode) => {
     if (!authed) return;
-    setStatusFilter((prev) => (prev.includes(code) ? prev.filter((x) => x !== code) : [...prev, code]) as TrangThaiCode[]);
+    setStatusFilter((prev) =>
+      (prev.includes(code) ? prev.filter((x) => x !== code) : [...prev, code]) as TrangThaiCode[]
+    );
   };
 
   const activeTags = useMemo(() => {
@@ -141,10 +167,8 @@ export default function MapPage() {
     return tags;
   }, [type, timeRange, radius, statusFilter, authed, hidePOI]);
 
-  /** ====== UI blocks ====== */
   const FilterContent = (
     <div className="mt-4 grid gap-6">
-      {/* time */}
       <div className="grid gap-2">
         <div className="text-sm font-semibold">Khoảng thời gian</div>
         <div className="grid grid-cols-3 gap-2">
@@ -156,6 +180,7 @@ export default function MapPage() {
           >
             Tất cả
           </button>
+
           {[1, 3, 6, 12, 24, 48, 72].map((h) => (
             <button
               key={h}
@@ -170,7 +195,6 @@ export default function MapPage() {
         </div>
       </div>
 
-      {/* radius */}
       <div className="grid gap-2">
         <div className="text-sm font-semibold">Bán kính</div>
         <div className="grid grid-cols-3 gap-2">
@@ -189,7 +213,6 @@ export default function MapPage() {
         <div className="text-xs text-gray-500">* Lọc theo bán kính từ tâm bản đồ hiện tại.</div>
       </div>
 
-      {/* status */}
       <div className="grid gap-2">
         <div className="text-sm font-semibold flex items-center justify-between">
           <span>Trạng thái</span>
@@ -218,7 +241,11 @@ export default function MapPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => (authed ? setStatusFilter(STATUS_ENTRIES.map((s) => s.code)) : setStatusFilter(['tiep_nhan']))}
+            onClick={() =>
+              authed
+                ? setStatusFilter(STATUS_ENTRIES.map((s) => s.code))
+                : setStatusFilter(['tiep_nhan'])
+            }
             disabled={!authed}
           >
             Tất cả
@@ -226,10 +253,13 @@ export default function MapPage() {
         </div>
       </div>
 
-      {/* POI */}
       <div className="flex items-center justify-between border rounded-lg p-3">
         <div className="text-sm">Ẩn POI (bệnh viện, trạm xăng,…)</div>
-        <input type="checkbox" checked={hidePOI} onChange={(e) => setHidePOI(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={hidePOI}
+          onChange={(e) => setHidePOI(e.target.checked)}
+        />
       </div>
 
       <Button
@@ -245,11 +275,8 @@ export default function MapPage() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6">
-      {/* LEFT: MAP */}
       <div className="relative rounded-2xl overflow-hidden border bg-white">
-        {/* Top controls */}
         <div className="absolute left-4 right-4 top-4 z-[5] flex flex-col gap-3">
-          {/* row 1 */}
           <div className="flex items-center gap-2">
             <div className="flex-1 relative">
               <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -292,7 +319,6 @@ export default function MapPage() {
             </Sheet>
           </div>
 
-          {/* row 2: segmented type */}
           <div className="inline-flex w-fit rounded-xl border bg-white/90 backdrop-blur p-1 shadow-sm">
             {(['all', 'cuu_nguoi', 'nhu_yeu_pham'] as const).map((t) => (
               <button
@@ -307,7 +333,6 @@ export default function MapPage() {
             ))}
           </div>
 
-          {/* row 3: tags */}
           <div className="flex flex-wrap gap-2">
             {activeTags.slice(0, 5).map((t) => (
               <Badge key={t} variant="secondary" className="bg-white/90 backdrop-blur">
@@ -329,7 +354,6 @@ export default function MapPage() {
         />
       </div>
 
-      {/* RIGHT: LIST PANEL */}
       <div className="rounded-2xl border bg-white p-3 flex flex-col h-[calc(100vh-100px)]">
         <div className="flex items-center justify-between">
           <div>
@@ -337,7 +361,6 @@ export default function MapPage() {
             <div className="text-xs text-gray-500">{points.length} sự kiện</div>
           </div>
 
-          {/* Mobile only: open filter drawer quickly */}
           <div className="lg:hidden">
             <Button variant="outline" size="sm" onClick={() => setSheetOpen(true)}>
               <Filter className="h-4 w-4 mr-2" />
@@ -360,7 +383,6 @@ export default function MapPage() {
                 }`}
                 onClick={() => focusAndOpen(p)}
               >
-                {/* header row */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -380,7 +402,9 @@ export default function MapPage() {
                         {statusLabel(p.trang_thai)}
                       </span>
 
-                      {!!p.createdAt && <span className="text-xs text-gray-500">• {timeAgo(p.createdAt)}</span>}
+                      {!!p.createdAt && (
+                        <span className="text-xs text-gray-500">• {timeAgo(p.createdAt)}</span>
+                      )}
                     </div>
 
                     <div className="mt-1 font-semibold leading-5 line-clamp-2">
@@ -392,7 +416,6 @@ export default function MapPage() {
                     </div>
                   </div>
 
-                  {/* actions */}
                   <div className="flex items-center gap-1 shrink-0">
                     <Button
                       size="icon"
@@ -422,11 +445,11 @@ export default function MapPage() {
                   </div>
                 </div>
 
-                {/* media thumbs (gọn) */}
                 {media.length ? (
                   <div className="mt-3 flex items-center gap-2">
                     {showThumb.map((m: any, idx: number) => {
                       const key = m.id ?? m.media_id ?? m.url ?? `idx-${idx}`;
+
                       return m.type === 'image' ? (
                         <button
                           key={key}
@@ -436,11 +459,9 @@ export default function MapPage() {
                             setLightbox({ items: media, index: idx });
                           }}
                         >
-                          <Image
+                          <img
                             src={m.url}
                             alt=""
-                            width={400}
-                            height={260}
                             className="w-24 h-16 object-cover rounded-lg border"
                           />
                         </button>
@@ -469,7 +490,6 @@ export default function MapPage() {
         </div>
       </div>
 
-      {/* LIGHTBOX */}
       {lightbox && (
         <div
           className="fixed inset-0 bg-black/70 z-[60] grid place-items-center p-4"
@@ -477,15 +497,17 @@ export default function MapPage() {
         >
           <div className="max-w-4xl w-full" onClick={(e) => e.stopPropagation()}>
             {lightbox.items[lightbox.index].type === 'image' ? (
-              <Image
+              <img
                 src={lightbox.items[lightbox.index].url}
                 alt=""
-                width={1600}
-                height={1000}
                 className="w-full h-auto rounded-lg"
               />
             ) : (
-              <video src={lightbox.items[lightbox.index].url} controls className="w-full rounded-lg" />
+              <video
+                src={lightbox.items[lightbox.index].url}
+                controls
+                className="w-full rounded-lg"
+              />
             )}
 
             <div className="flex justify-between mt-3 gap-2">
@@ -499,14 +521,18 @@ export default function MapPage() {
               >
                 Trước
               </Button>
+
               <Button
                 variant="outline"
                 onClick={() =>
-                  setLightbox((v) => (v ? { ...v, index: (v.index + 1) % v.items.length } : v))
+                  setLightbox((v) =>
+                    v ? { ...v, index: (v.index + 1) % v.items.length } : v
+                  )
                 }
               >
                 Sau
               </Button>
+
               <Button onClick={() => setLightbox(null)}>Đóng</Button>
             </div>
           </div>

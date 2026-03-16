@@ -43,6 +43,8 @@ const STYLE_URL =
   process.env.NEXT_PUBLIC_VIETMAP_STYLE_BASE ||
   'https://maps.vietmap.vn/mt/tm/style.json';
 
+const API_BASE = 'http://127.0.0.1:8000';
+
 const STATUS_MAP: Record<
   TrangThaiCode,
   { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }
@@ -54,12 +56,110 @@ const STATUS_MAP: Record<
   huy: { label: 'Hủy', variant: 'destructive' },
 };
 
+
+
 function statusClass(code: TrangThaiCode) {
   if (code === 'da_hoan_thanh') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
   if (code === 'da_chuyen_cum') return 'bg-blue-100 text-blue-700 border-blue-200';
   if (code === 'huy') return 'bg-rose-100 text-rose-700 border-rose-200';
   if (code === 'dang_xu_ly') return 'bg-amber-100 text-amber-800 border-amber-200';
   return 'bg-slate-100 text-slate-700 border-slate-200';
+}
+
+function normalizeMediaUrl(raw?: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+
+  const value = raw.trim();
+  if (!value) return '';
+
+  // URL tuyệt đối nhưng đang sai dạng /yeucau/... => rewrite sang /storage/yeucau/...
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    try {
+      const u = new URL(value);
+
+      if (u.pathname.startsWith('/yeucau/')) {
+        u.pathname = `/storage${u.pathname}`;
+        return u.toString();
+      }
+
+      return value;
+    } catch {
+      return value;
+    }
+  }
+
+  if (value.startsWith('//')) {
+    return `http:${value}`;
+  }
+
+  // path tương đối dạng /yeucau/... => rewrite
+  if (value.startsWith('/yeucau/')) {
+    return `${API_BASE}/storage${value}`;
+  }
+
+  // path tương đối dạng yeucau/... => rewrite
+  if (value.startsWith('yeucau/')) {
+    return `${API_BASE}/storage/${value}`;
+  }
+
+  // path đã đúng dạng /storage/...
+  if (value.startsWith('/storage/')) {
+    return `${API_BASE}${value}`;
+  }
+
+  // filename trần
+  return `${API_BASE}/storage/yeucau/${value}`;
+}
+
+function inferMediaType(m: any): 'image' | 'video' {
+  if (m?.type === 'image' || m?.loai === 'image') return 'image';
+  if (m?.type === 'video' || m?.loai === 'video') return 'video';
+
+  const mime = String(m?.mime || m?.mime_type || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+
+  const url = String(
+    m?.url ||
+      m?.file_url ||
+      m?.path ||
+      m?.duong_dan ||
+      m?.file_name ||
+      m?.ten_file ||
+      ''
+  ).toLowerCase();
+
+  if (/\.(mp4|mov|avi|webm|mkv)(\?|$)/.test(url)) return 'video';
+  return 'image';
+}
+
+function normalizeMediaItem(m: any): Media | null {
+  const raw =
+    m?.url ||
+    m?.file_url ||
+    m?.path ||
+    m?.duong_dan ||
+    m?.file_name ||
+    m?.ten_file ||
+    '';
+
+  const url = normalizeMediaUrl(raw);
+
+  console.log('RAW MEDIA:', m);
+  console.log('RAW VALUE:', raw);
+  console.log('FINAL URL:', url);
+
+  if (!url) return null;
+
+  return {
+    id: m?.id ?? m?.media_id ?? url,
+    type: inferMediaType(m),
+    url,
+  };
+}
+
+function buildMediaList(list: any[]): Media[] {
+  return (list || []).map(normalizeMediaItem).filter(Boolean) as Media[];
 }
 
 const Donut = ({ value, total, size = 72 }: { value: number; total: number; size?: number }) => {
@@ -98,10 +198,10 @@ const Donut = ({ value, total, size = 72 }: { value: number; total: number; size
 
 export default function AdminDashboard() {
   const [mode, setMode] = useState<'unassigned' | 'assigned' | 'all'>('unassigned');
-const [cumId, setCumId] = useState<string>('');
-const [statusSel, setStatusSel] = useState<'' | TrangThaiCode>('tiep_nhan');
-const [isAdmin, setIsAdmin] = useState(false);
-const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
+  const [cumId, setCumId] = useState<string>('');
+  const [statusSel, setStatusSel] = useState<'' | TrangThaiCode>('tiep_nhan');
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
 
   const [clusters, setClusters] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -155,21 +255,17 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
   }, [lbItems.length]);
 
   useEffect(() => {
-  Promise.all([
-    getCurrentUser(),
-    listClusters(''),
-    listUsers(''),
-  ])
-    .then(([currentUser, clustersData, usersData]) => {
-      const roles: string[] = currentUser?.roles ?? [];
-      setIsAdmin(roles.includes('Quản trị'));
+    Promise.all([getCurrentUser(), listClusters(''), listUsers('')])
+      .then(([currentUser, clustersData, usersData]) => {
+        const roles: string[] = currentUser?.roles ?? [];
+        setIsAdmin(roles.includes('Quản trị'));
 
-      setClusters(clustersData?.data ?? []);
-      setUsers(usersData?.data ?? []);
-    })
-    .catch(console.error)
-    .finally(() => setLoadingCurrentUser(false));
-}, []);
+        setClusters(clustersData?.data ?? []);
+        setUsers(usersData?.data ?? []);
+      })
+      .catch(console.error)
+      .finally(() => setLoadingCurrentUser(false));
+  }, []);
 
   useEffect(() => {
     if (mode === 'unassigned') {
@@ -198,9 +294,9 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
   }, [mode, cumId, statusSel, page]);
 
   useEffect(() => {
-  if (loadingCurrentUser) return;
-  reload().catch(console.error);
-}, [reload, loadingCurrentUser]);
+    if (loadingCurrentUser) return;
+    reload().catch(console.error);
+  }, [reload, loadingCurrentUser]);
 
   const points: MapPoint[] = useMemo(
     () =>
@@ -209,11 +305,7 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
         .map((r: any) => {
           const loai = String(r.loai || r.loai_yeu_cau || '').toLowerCase();
 
-          const media: Media[] = (r.media || []).map((m: any) => {
-            const type: 'image' | 'video' =
-              m.type ?? ((m.mime || '').startsWith('image/') ? 'image' : 'video');
-            return { id: m.id, type, url: m.url };
-          });
+          const media: Media[] = buildMediaList(r.media || []);
 
           const vattu =
             (r.vattu_chi_tiet || []).map((vt: any) => ({
@@ -288,13 +380,9 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
   }, [lbOpen, lbPrev, lbNext]);
 
   const openLightboxFromRow = (row: any, index: number) => {
-    const items: Media[] = (row.media || []).map((mm: any) => {
-      const type: 'image' | 'video' =
-        mm.type ?? ((mm.mime || '').startsWith('image/') ? 'image' : 'video');
-      return { id: mm.id, type, url: mm.url };
-    });
-
+    const items: Media[] = buildMediaList(row.media || []);
     if (!items.length) return;
+
     setLbItems(items);
     setLbIndex(index);
     setLbOpen(true);
@@ -308,23 +396,23 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
             <div className="flex flex-col lg:flex-row lg:items-center gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <select
-  className="border rounded-xl h-10 px-3 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100 disabled:text-slate-500"
-  value={cumId}
-  onChange={(e) => {
-    setCumId(e.target.value);
-    setPage(1);
-  }}
-  disabled={!isAdmin || loadingCurrentUser}
->
-  <option value="">{isAdmin ? '— Tất cả cụm —' : '— Cụm của tôi —'}</option>
+                  className="border rounded-xl h-10 px-3 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100 disabled:text-slate-500"
+                  value={cumId}
+                  onChange={(e) => {
+                    setCumId(e.target.value);
+                    setPage(1);
+                  }}
+                  disabled={!isAdmin || loadingCurrentUser}
+                >
+                  <option value="">{isAdmin ? '— Tất cả cụm —' : '— Cụm của tôi —'}</option>
 
-  {isAdmin &&
-    clusters.map((c: any) => (
-      <option key={c.id} value={c.id}>
-        {c.ten}
-      </option>
-    ))}
-</select>
+                  {isAdmin &&
+                    clusters.map((c: any) => (
+                      <option key={c.id} value={c.id}>
+                        {c.ten}
+                      </option>
+                    ))}
+                </select>
 
                 <select
                   className="border rounded-xl h-10 px-3 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200"
@@ -451,14 +539,14 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                 if (row) openTransferDialog(row);
               }}
               onClaim={async (id) => {
-  try {
-    if (!confirm(`Bạn muốn nhận xử lý yêu cầu #${id}?`)) return;
-    await claimYeuCau(Number(id));
-    await reload();
-  } catch (err: any) {
-    alert(err?.message || 'Không thể nhận xử lý yêu cầu này.');
-  }
-}}
+                try {
+                  if (!confirm(`Bạn muốn nhận xử lý yêu cầu #${id}?`)) return;
+                  await claimYeuCau(Number(id));
+                  await reload();
+                } catch (err: any) {
+                  alert(err?.message || 'Không thể nhận xử lý yêu cầu này.');
+                }
+              }}
               className="h-[250px] md:h-[350px] w-full"
               initialAutoLocate
               hidePlaces
@@ -510,6 +598,9 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
               const code = ((r.trang_thai as TrangThaiCode) ?? 'tiep_nhan') as TrangThaiCode;
               const st = STATUS_MAP[code] ?? STATUS_MAP.tiep_nhan;
 
+              const rowMedia = buildMediaList(r.media || []);
+console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', rowMedia);
+
               return (
                 <div
                   key={r.id}
@@ -523,16 +614,17 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                     setSelectedId(Number(r.id));
                     setDetailOpen(true);
                     if (r.lng != null && r.lat != null) {
-  setMapView({ center: [Number(r.lng), Number(r.lat)], zoom: 15 });
-}
+                      setMapView({ center: [Number(r.lng), Number(r.lat)], zoom: 15 });
+                    }
                   }}
                 >
                   <div className="md:col-span-3">
-                    {r.media?.length ? (
+                    {rowMedia.length ? (
                       <div className="grid grid-cols-2 gap-2">
-                        {r.media.map((m: any, idx: number) => {
-                          const key = m.id ?? m.media_id ?? m.url ?? `m-${r.id}-${idx}`;
-                          const isImage = m.type === 'image' || (m.mime ?? '').startsWith('image/');
+                        {rowMedia.map((m: Media, idx: number) => {
+                          const key = m.id ?? m.url ?? `m-${r.id}-${idx}`;
+                          const isImage = m.type === 'image';
+
                           return isImage ? (
                             <button
                               key={key}
@@ -541,14 +633,16 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                                 openLightboxFromRow(r, idx);
                               }}
                               className="group"
+                              type="button"
                             >
-                              <Image
-                                src={m.url}
-                                alt=""
-                                width={320}
-                                height={240}
-                                className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
-                              />
+                              <img
+  src={m.url}
+  alt=""
+  className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
+  onError={(e) => {
+    console.log('IMG ERROR SRC:', (e.currentTarget as HTMLImageElement).src);
+  }}
+/>
                             </button>
                           ) : (
                             <button
@@ -558,6 +652,7 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                                 openLightboxFromRow(r, idx);
                               }}
                               className="group"
+                              type="button"
                             >
                               <video
                                 src={m.url}
@@ -606,7 +701,7 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                             className="px-2 py-0.5 rounded-full border text-xs bg-slate-50"
                             title={`${vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư'}`}
                           >
-                            {(vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư')}
+                            {vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư'}
                             {vt.so_luong ? ` × ${vt.so_luong}` : ''}
                             {vt.don_vi || vt?.vattu?.don_vi || vt?.vattu?.donvi
                               ? ` ${vt.don_vi ?? vt?.vattu?.don_vi ?? vt?.vattu?.donvi ?? ''}`
@@ -623,29 +718,29 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                     </Badge>
 
                     <div className="text-xs text-muted-foreground">
-  {created ? created.toLocaleString('vi-VN') : ''}
-</div>
+                      {created ? created.toLocaleString('vi-VN') : ''}
+                    </div>
 
                     <div className="flex flex-wrap justify-end gap-2">
                       {r.trang_thai === 'tiep_nhan' && !r.duoc_giao_cho && (
-  <Button
-    variant="outline"
-    size="sm"
-    className="rounded-xl"
-    onClick={async (e) => {
-      e.stopPropagation();
-      try {
-        if (!confirm('Bạn có chắc muốn nhận xử lý yêu cầu này?')) return;
-        await claimYeuCau(Number(r.id));
-        await reload();
-      } catch (err: any) {
-        alert(err?.message || 'Không thể nhận xử lý yêu cầu này.');
-      }
-    }}
-  >
-    Nhận xử lý
-  </Button>
-)}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              if (!confirm('Bạn có chắc muốn nhận xử lý yêu cầu này?')) return;
+                              await claimYeuCau(Number(r.id));
+                              await reload();
+                            } catch (err: any) {
+                              alert(err?.message || 'Không thể nhận xử lý yêu cầu này.');
+                            }
+                          }}
+                        >
+                          Nhận xử lý
+                        </Button>
+                      )}
 
                       <Button
                         size="sm"
@@ -765,8 +860,8 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                   </Badge>
 
                   <div className="text-sm text-muted-foreground">
-  {selectedRow.created_at ? new Date(selectedRow.created_at).toLocaleString('vi-VN') : ''}
-</div>
+                    {selectedRow.created_at ? new Date(selectedRow.created_at).toLocaleString('vi-VN') : ''}
+                  </div>
 
                   {selectedRow.lat != null && selectedRow.lng != null && (
                     <a
@@ -804,7 +899,7 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                           key={vt.id || `${vt.vattu_id}-${i}`}
                           className="px-2 py-1 rounded-full border text-xs bg-slate-50"
                         >
-                          {(vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư')}
+                          {vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư'}
                           {vt.so_luong ? ` × ${vt.so_luong}` : ''}
                           {vt.don_vi || vt?.vattu?.don_vi || vt?.vattu?.donvi
                             ? ` ${vt.don_vi ?? vt?.vattu?.don_vi ?? vt?.vattu?.donvi ?? ''}`
@@ -815,32 +910,36 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                   </div>
                 )}
 
-                {!!selectedRow.media?.length && (
+                {!!buildMediaList(selectedRow.media || []).length && (
                   <div className="rounded-2xl border bg-white p-4 shadow-sm">
                     <div className="font-semibold mb-2">Media</div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {selectedRow.media.map((m: any, idx: number) => {
-                        const key = m.id ?? m.media_id ?? m.url ?? `m-${selectedRow.id}-${idx}`;
-                        const isImage = m.type === 'image' || (m.mime ?? '').startsWith('image/');
+                      {buildMediaList(selectedRow.media || []).map((m: Media, idx: number) => {
+                        const key = m.id ?? m.url ?? `m-${selectedRow.id}-${idx}`;
+                        const isImage = m.type === 'image';
+
                         return isImage ? (
                           <button
                             key={key}
                             onClick={() => openLightboxFromRow(selectedRow, idx)}
                             className="group"
+                            type="button"
                           >
-                            <Image
-                              src={m.url}
-                              alt=""
-                              width={320}
-                              height={240}
-                              className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
-                            />
+                            <img
+  src={m.url}
+  alt=""
+  className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
+  onError={(e) => {
+    console.log('IMG ERROR SRC:', (e.currentTarget as HTMLImageElement).src);
+  }}
+/>
                           </button>
                         ) : (
                           <button
                             key={key}
                             onClick={() => openLightboxFromRow(selectedRow, idx)}
                             className="group"
+                            type="button"
                           >
                             <video
                               src={m.url}
@@ -859,22 +958,22 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
 
                   <div className="flex flex-wrap gap-2">
                     {selectedRow.trang_thai === 'tiep_nhan' && !selectedRow.duoc_giao_cho && (
-  <Button
-    variant="outline"
-    className="rounded-xl"
-    onClick={async () => {
-      try {
-        if (!confirm('Bạn có chắc muốn nhận xử lý yêu cầu này?')) return;
-        await claimYeuCau(Number(selectedRow.id));
-        await reload();
-      } catch (err: any) {
-        alert(err?.message || 'Không thể nhận xử lý yêu cầu này.');
-      }
-    }}
-  >
-    Nhận xử lý
-  </Button>
-)}
+                      <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={async () => {
+                          try {
+                            if (!confirm('Bạn có chắc muốn nhận xử lý yêu cầu này?')) return;
+                            await claimYeuCau(Number(selectedRow.id));
+                            await reload();
+                          } catch (err: any) {
+                            alert(err?.message || 'Không thể nhận xử lý yêu cầu này.');
+                          }
+                        }}
+                      >
+                        Nhận xử lý
+                      </Button>
+                    )}
 
                     <Button
                       variant="outline"
@@ -966,10 +1065,10 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                   >
                     <option value="">— Không chọn —</option>
                     {clusters.map((c: any) => (
-  <option key={c.id} value={c.id}>
-    {c.ten}
-  </option>
-))}
+                      <option key={c.id} value={c.id}>
+                        {c.ten}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1072,8 +1171,8 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
                       {h.trang_thai_hien_thi ?? h.hanh_dong ?? h.trang_thai ?? ''}
                     </Badge>
                     <div className="text-xs text-muted-foreground">
-  {h.created_at ? new Date(h.created_at).toLocaleString('vi-VN') : ''}
-</div>
+                      {h.created_at ? new Date(h.created_at).toLocaleString('vi-VN') : ''}
+                    </div>
                     <div className="ml-auto text-xs">
                       {h.nguoi_thuc_hien ?? h.user?.name ?? ''}
                     </div>
@@ -1094,6 +1193,7 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
               className="absolute top-4 right-4 text-white/80 hover:text-white"
               onClick={() => setLbOpen(false)}
               title="Đóng"
+              type="button"
             >
               <X />
             </button>
@@ -1101,6 +1201,7 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
               className="absolute left-4 text-white/80 hover:text-white"
               onClick={lbPrev}
               title="Trước"
+              type="button"
             >
               <ArrowLeft />
             </button>
@@ -1108,6 +1209,7 @@ const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
               className="absolute right-12 text-white/80 hover:text-white"
               onClick={lbNext}
               title="Sau"
+              type="button"
             >
               <ArrowRight />
             </button>

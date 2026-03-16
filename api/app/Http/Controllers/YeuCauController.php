@@ -10,11 +10,54 @@ use Illuminate\Support\Facades\Storage;
 use App\Models\YeuCau;
 use App\Models\VatTu;
 use App\Models\TepDinhKem;
-use App\Models\YeuCauVatTu;
 use App\Models\YeuCauNhatKy;
 
 class YeuCauController extends Controller
 {
+    private function mediaUrl(?string $path): ?string
+{
+    if (!$path) {
+        return null;
+    }
+
+    $path = trim($path);
+
+    if (Str::startsWith($path, ['http://', 'https://'])) {
+        return $path;
+    }
+
+    $path = ltrim($path, '/');
+
+    return url(Storage::url($path));
+}
+
+    private function isAdmin($user): bool
+    {
+        return $user && method_exists($user, 'hasRole') && $user->hasRole('Quản trị');
+    }
+
+    private function getAllowedCumIds($user): array
+    {
+        $memberIds = method_exists($user, 'cums')
+            ? $user->cums()
+                ->pluck('cum.id')
+                ->map(fn($id) => (int) $id)
+                ->toArray()
+            : DB::table('cum_thanh_vien')
+                ->where('user_id', $user->id)
+                ->pluck('cum_id')
+                ->map(fn($id) => (int) $id)
+                ->toArray();
+
+        $chiHuyIds = DB::table('cum')
+            ->where('chi_huy_id', $user->id)
+            ->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->toArray();
+
+        return array_values(array_unique(array_merge($memberIds, $chiHuyIds)));
+    }
+
     public function index(Request $req)
     {
         $q = YeuCau::query()
@@ -40,6 +83,17 @@ class YeuCauController extends Controller
 
         if ($req->filled('loai')) {
             $q->where('loai', $req->string('loai'));
+        }
+
+        if ($req->filled('trang_thai')) {
+            $statuses = collect(explode(',', $req->input('trang_thai')))
+                ->map(fn($x) => trim($x))
+                ->filter()
+                ->values();
+
+            if ($statuses->isNotEmpty()) {
+                $q->whereIn('trang_thai', $statuses);
+            }
         }
 
         if ($req->filled('q')) {
@@ -88,11 +142,12 @@ class YeuCauController extends Controller
                     'trang_thai' => $r->trang_thai,
                     'created_at' => $r->created_at,
                     'media' => $r->media->map(fn($m) => [
-                        'url' => Storage::url($m->duong_dan),
-                        'type' => Str::startsWith($m->mime, 'image/')
+                        'id' => $m->id,
+                        'url' => $this->mediaUrl($m->duong_dan),
+                        'type' => Str::startsWith($m->mime ?? '', 'image/')
                             ? 'image'
-                            : (Str::startsWith($m->mime, 'video/') ? 'video' : 'other'),
-                        'thumb' => $m->duong_dan,
+                            : (Str::startsWith($m->mime ?? '', 'video/') ? 'video' : 'other'),
+                        'thumb' => $this->mediaUrl($m->duong_dan),
                     ])->values(),
                     'vattu_chitiet' => $r->vattuChiTiet->map(function ($c) {
                         return [
@@ -107,106 +162,107 @@ class YeuCauController extends Controller
     }
 
     public function indexAdmin(Request $request)
-{
-    $user = $request->user();
+    {
+        $user = $request->user();
 
-    $q = YeuCau::query()
-        ->with([
-            'media:id,doi_tuong,doi_tuong_id,duong_dan,mime,created_at',
-            'vattuChiTiet.vattu:id,ten,donvi'
-        ])
-        ->orderByDesc('id');
+        $q = YeuCau::query()
+            ->with([
+                'media:id,doi_tuong,doi_tuong_id,duong_dan,mime,created_at',
+                'vattuChiTiet.vattu:id,ten,donvi'
+            ])
+            ->orderByDesc('id');
 
-    if (!$this->isAdmin($user)) {
-        $allowedCumIds = $this->getAllowedCumIds($user);
+        if (!$this->isAdmin($user)) {
+            $allowedCumIds = $this->getAllowedCumIds($user);
 
-        if (empty($allowedCumIds)) {
-            $q->whereRaw('1 = 0');
+            if (empty($allowedCumIds)) {
+                $q->whereRaw('1 = 0');
+            } else {
+                if ($request->filled('cum_id')) {
+                    $requestedCumId = (int) $request->cum_id;
+
+                    if (in_array($requestedCumId, $allowedCumIds, true)) {
+                        $q->where('cum_id', $requestedCumId);
+                    } else {
+                        $q->whereRaw('1 = 0');
+                    }
+                } else {
+                    $q->whereIn('cum_id', $allowedCumIds);
+                }
+            }
         } else {
             if ($request->filled('cum_id')) {
-                $requestedCumId = (int) $request->cum_id;
+                $q->where('cum_id', (int) $request->cum_id);
+            }
+        }
 
-                if (in_array($requestedCumId, $allowedCumIds, true)) {
-                    $q->where('cum_id', $requestedCumId);
-                } else {
-                    $q->whereRaw('1 = 0');
+        if ($request->boolean('assigned_to_me')) {
+            $cumIds = collect($this->getAllowedCumIds($user));
+
+            $q->where(function ($w) use ($user, $cumIds) {
+                $w->where('duoc_giao_cho', $user->id);
+
+                if ($cumIds->isNotEmpty()) {
+                    $w->orWhereIn('cum_id', $cumIds->all());
                 }
-            } else {
-                $q->whereIn('cum_id', $allowedCumIds);
-            }
-        }
-    } else {
-        if ($request->filled('cum_id')) {
-            $q->where('cum_id', (int) $request->cum_id);
-        }
-    }
-
-    if ($request->boolean('assigned_to_me')) {
-        $cumIds = collect($this->getAllowedCumIds($user));
-
-        $q->where(function ($w) use ($user, $cumIds) {
-            $w->where('duoc_giao_cho', $user->id);
-
-            if ($cumIds->isNotEmpty()) {
-                $w->orWhereIn('cum_id', $cumIds->all());
-            }
-        });
-    }
-
-    if ($request->boolean('chua_phan_cong')) {
-        $q->whereNull('duoc_giao_cho')->whereNull('cum_id');
-    }
-
-    if ($request->filled('trang_thai')) {
-        $vals = collect(explode(',', $request->trang_thai))
-            ->map(fn($x) => trim($x))
-            ->filter()
-            ->values();
-
-        if ($vals->isNotEmpty()) {
-            $q->whereIn('trang_thai', $vals);
-        }
-    }
-
-    if ($request->filled('q')) {
-        $kw = trim($request->q);
-        $q->where(function ($s) use ($kw) {
-            if (ctype_digit($kw)) {
-                $s->orWhere('id', (int) $kw);
-            }
-            $s->orWhere('ten_nguoigui', 'like', "%$kw%")
-                ->orWhere('sdt_nguoigui', 'like', "%$kw%")
-                ->orWhere('noidung', 'like', "%$kw%");
-        });
-    }
-
-    if ($request->filled('hours') && (int) $request->hours > 0) {
-        $q->where('created_at', '>=', now()->subHours((int) $request->hours));
-    }
-
-    $perPage = max(1, min(100, (int) $request->input('per_page', 100)));
-    $p = $q->paginate($perPage);
-
-    $p->getCollection()->transform(function ($item) {
-        if ($item->relationLoaded('media')) {
-            $item->media->transform(function ($m) {
-                $m->url = Storage::url($m->duong_dan);
-                $m->type = str_starts_with($m->mime ?? '', 'image/')
-                    ? 'image'
-                    : (str_starts_with($m->mime ?? '', 'video/') ? 'video' : 'other');
-                return $m;
             });
         }
 
-        if ($item->relationLoaded('vattuChiTiet')) {
-            $item->vattu_chi_tiet = $item->vattuChiTiet;
+        if ($request->boolean('chua_phan_cong')) {
+            $q->whereNull('duoc_giao_cho')->whereNull('cum_id');
         }
 
-        return $item;
-    });
+        if ($request->filled('trang_thai')) {
+            $vals = collect(explode(',', $request->trang_thai))
+                ->map(fn($x) => trim($x))
+                ->filter()
+                ->values();
 
-    return $p;
-}
+            if ($vals->isNotEmpty()) {
+                $q->whereIn('trang_thai', $vals);
+            }
+        }
+
+        if ($request->filled('q')) {
+            $kw = trim($request->q);
+            $q->where(function ($s) use ($kw) {
+                if (ctype_digit($kw)) {
+                    $s->orWhere('id', (int) $kw);
+                }
+                $s->orWhere('ten_nguoigui', 'like', "%$kw%")
+                    ->orWhere('sdt_nguoigui', 'like', "%$kw%")
+                    ->orWhere('noidung', 'like', "%$kw%");
+            });
+        }
+
+        if ($request->filled('hours') && (int) $request->hours > 0) {
+            $q->where('created_at', '>=', now()->subHours((int) $request->hours));
+        }
+
+        $perPage = max(1, min(100, (int) $request->input('per_page', 100)));
+        $p = $q->paginate($perPage);
+
+        $p->getCollection()->transform(function ($item) {
+            if ($item->relationLoaded('media')) {
+                $item->media->transform(function ($m) {
+                    $m->url = $this->mediaUrl($m->duong_dan);
+                    $m->thumb = $this->mediaUrl($m->duong_dan);
+                    $m->type = str_starts_with($m->mime ?? '', 'image/')
+                        ? 'image'
+                        : (str_starts_with($m->mime ?? '', 'video/') ? 'video' : 'other');
+                    return $m;
+                });
+            }
+
+            if ($item->relationLoaded('vattuChiTiet')) {
+                $item->vattu_chi_tiet = $item->vattuChiTiet;
+            }
+
+            return $item;
+        });
+
+        return $p;
+    }
 
     public function show($id)
     {
@@ -232,11 +288,12 @@ class YeuCauController extends Controller
             'trang_thai' => $r->trang_thai,
             'created_at' => $r->created_at,
             'media' => $r->media->map(fn($m) => [
-                'url' => Storage::url($m->duong_dan),
-                'type' => Str::startsWith($m->mime, 'image/')
+                'id' => $m->id,
+                'url' => $this->mediaUrl($m->duong_dan),
+                'type' => Str::startsWith($m->mime ?? '', 'image/')
                     ? 'image'
-                    : (Str::startsWith($m->mime, 'video/') ? 'video' : 'other'),
-                'thumb' => $m->duong_dan,
+                    : (Str::startsWith($m->mime ?? '', 'video/') ? 'video' : 'other'),
+                'thumb' => $this->mediaUrl($m->duong_dan),
             ])->values(),
             'vattu_chitiet' => $r->vattuChiTiet->map(function ($c) {
                 return [
@@ -308,7 +365,8 @@ class YeuCauController extends Controller
                 ])->values() ?? [],
                 'media' => $item->media?->map(fn($m) => [
                     'id' => $m->id,
-                    'url' => Storage::url($m->duong_dan),
+                    'url' => $this->mediaUrl($m->duong_dan),
+                    'thumb' => $this->mediaUrl($m->duong_dan),
                     'type' => str_contains($m->mime ?? '', 'video') ? 'video' : 'image',
                 ])->values() ?? [],
                 'created_at' => optional($item->created_at)
@@ -430,8 +488,9 @@ class YeuCauController extends Controller
             })->values(),
             'media' => $yc->media->map(fn($m) => [
                 'id' => $m->id,
-                'url' => Storage::url($m->duong_dan),
-                'type' => str_contains($m->mime, 'video') ? 'video' : 'image',
+                'url' => $this->mediaUrl($m->duong_dan),
+                'thumb' => $this->mediaUrl($m->duong_dan),
+                'type' => str_contains($m->mime ?? '', 'video') ? 'video' : 'image',
             ])->values(),
             'created_at' => optional($yc->created_at)->format('Y-m-d H:i:s'),
         ]);
@@ -458,7 +517,6 @@ class YeuCauController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    // Giữ tương thích route cũ /admin/yeucau/{id}/giao
     public function giao($id, Request $r)
     {
         $r->validate([
@@ -491,32 +549,13 @@ class YeuCauController extends Controller
 
         return response()->json(['ok' => true]);
     }
-    private function isAdmin($user): bool
-{
-    return $user && method_exists($user, 'hasRole') && $user->hasRole('Quản trị');
-}
-
-private function getAllowedCumIds($user): array
-{
-    $memberIds = method_exists($user, 'cums')
-        ? $user->cums()->pluck('cum.id')->map(fn($id) => (int) $id)->toArray()
-        : DB::table('cum_thanh_vien')->where('user_id', $user->id)->pluck('cum_id')->map(fn($id) => (int) $id)->toArray();
-
-    $chiHuyIds = DB::table('cum')
-        ->where('chi_huy_id', $user->id)
-        ->pluck('id')
-        ->map(fn($id) => (int) $id)
-        ->toArray();
-
-    return array_values(array_unique(array_merge($memberIds, $chiHuyIds)));
-}
 
     public function doiTrangThai($id, Request $r)
     {
         $r->validate([
-    'trang_thai' => 'required|in:tiep_nhan,dang_xu_ly,da_chuyen_cum,da_hoan_thanh,huy',
-    'ghi_chu' => 'nullable|string',
-]);
+            'trang_thai' => 'required|in:tiep_nhan,dang_xu_ly,da_chuyen_cum,da_hoan_thanh,huy',
+            'ghi_chu' => 'nullable|string',
+        ]);
 
         $curr = DB::table('yeu_cau')->where('id', $id)->first();
 
@@ -526,17 +565,17 @@ private function getAllowedCumIds($user): array
 
         DB::transaction(function () use ($id, $r, $curr) {
             $update = [
-    'trang_thai' => $r->trang_thai,
-    'updated_at' => now(),
-];
+                'trang_thai' => $r->trang_thai,
+                'updated_at' => now(),
+            ];
 
-if ($r->trang_thai === 'tiep_nhan') {
-    $update['duoc_giao_cho'] = null;
-}
+            if ($r->trang_thai === 'tiep_nhan') {
+                $update['duoc_giao_cho'] = null;
+            }
 
-DB::table('yeu_cau')
-    ->where('id', $id)
-    ->update($update);
+            DB::table('yeu_cau')
+                ->where('id', $id)
+                ->update($update);
 
             DB::table('yeu_cau_nhatky')->insert([
                 'yeu_cau_id' => $id,
@@ -555,56 +594,49 @@ DB::table('yeu_cau')
     }
 
     public function claim($id, Request $request)
-{
-    $yc = YeuCau::findOrFail($id);
-    $user = $request->user();
+    {
+        $yc = YeuCau::findOrFail($id);
+        $user = $request->user();
 
-    /*
-    CHẶN TRƯỜNG HỢP ĐÃ ĐƯỢC XỬ LÝ
-    */
-    if ($yc->trang_thai !== 'tiep_nhan') {
+        if ($yc->trang_thai !== 'tiep_nhan') {
+            return response()->json([
+                'message' => 'Yêu cầu này đã được nhận xử lý'
+            ], 403);
+        }
+
+        if (!empty($yc->duoc_giao_cho) && (int) $yc->duoc_giao_cho !== (int) $user->id) {
+            return response()->json([
+                'message' => 'Yêu cầu này đang được giao cho người khác'
+            ], 403);
+        }
+
+        DB::transaction(function () use ($yc, $user) {
+            $oldTrangThai = $yc->trang_thai;
+            $oldNguoi = $yc->duoc_giao_cho;
+
+            $yc->duoc_giao_cho = $user->id;
+            $yc->trang_thai = 'dang_xu_ly';
+            $yc->updated_at = now();
+            $yc->save();
+
+            YeuCauNhatKy::create([
+                'yeu_cau_id' => $yc->id,
+                'thuc_hien_boi' => $user->id,
+                'hanh_dong' => 'nhan_xu_ly',
+                'tu_trangthai' => $oldTrangThai,
+                'den_trangthai' => 'dang_xu_ly',
+                'tu_nguoi' => $oldNguoi,
+                'den_nguoi' => $user->id,
+                'ghichu' => 'Nhận xử lý yêu cầu',
+                'tao_luc' => now(),
+            ]);
+        });
+
         return response()->json([
-            'message' => 'Yêu cầu này đã được nhận xử lý'
-        ], 403);
-    }
-
-    /*
-    CHẶN TRƯỜNG HỢP ĐÃ CÓ NGƯỜI NHẬN
-    */
-    if (!empty($yc->duoc_giao_cho) && (int)$yc->duoc_giao_cho !== (int)$user->id) {
-        return response()->json([
-            'message' => 'Yêu cầu này đang được giao cho người khác'
-        ], 403);
-    }
-
-    DB::transaction(function () use ($yc, $user) {
-
-        $oldTrangThai = $yc->trang_thai;
-        $oldNguoi = $yc->duoc_giao_cho;
-
-        $yc->duoc_giao_cho = $user->id;
-        $yc->trang_thai = 'dang_xu_ly';
-        $yc->updated_at = now();
-        $yc->save();
-
-        YeuCauNhatKy::create([
-            'yeu_cau_id' => $yc->id,
-            'thuc_hien_boi' => $user->id,
-            'hanh_dong' => 'nhan_xu_ly',
-            'tu_trangthai' => $oldTrangThai,
-            'den_trangthai' => 'dang_xu_ly',
-            'tu_nguoi' => $oldNguoi,
-            'den_nguoi' => $user->id,
-            'ghichu' => 'Nhận xử lý yêu cầu',
-            'tao_luc' => now(),
+            'ok' => true,
+            'message' => 'Nhận xử lý thành công'
         ]);
-    });
-
-    return response()->json([
-        'ok' => true,
-        'message' => 'Nhận xử lý thành công'
-    ]);
-}
+    }
 
     public function nhatKy($id)
     {
