@@ -34,4 +34,14 @@ class YeuCauNhatKy extends Model
     {
         return $this->belongsTo(YeuCau::class, 'yeu_cau_id');
     }
+
+    public function tuNguoi()
+    {
+        return $this->belongsTo(User::class, 'tu_nguoi');
+    }
+
+    public function denNguoi()
+    {
+        return $this->belongsTo(User::class, 'den_nguoi');
+    }
 }

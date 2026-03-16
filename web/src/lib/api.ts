@@ -48,7 +48,7 @@ export async function api(path: string, init: RequestInit = {}) {
 }
 
 export async function getCurrentUser() {
-  return api('/user');
+  return api('/me');
 }
 
 // ==============================
@@ -318,10 +318,10 @@ export async function quickUpdateTrangThai(
 
 export async function transferAssignment(
   id: number,
-  payload: { user_id?: number; cum_id?: number; ghi_chu?: string }
+  payload: { cum_id: number; user_id?: number; ghi_chu?: string }
 ) {
   return api(`/admin/yeucau/${id}/chuyen-xu-ly`, {
-    method: "POST",
+    method: 'POST',
     body: JSON.stringify(payload),
   });
 }

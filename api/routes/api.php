@@ -7,10 +7,11 @@ use App\Http\Controllers\YeuCauController;
 use App\Http\Controllers\KhoController;
 use App\Http\Controllers\VatTuController;
 use App\Http\Controllers\VietMapController;
+use App\Http\Controllers\PhanCongController;
 use App\Http\Controllers\Admin\KhoTonController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\RoleController;
-use App\Http\Controllers\PhanCongController;
+use App\Http\Controllers\Admin\YeuCauAdminController;
 
 /*
 |--------------------------------------------------------------------------
@@ -18,6 +19,7 @@ use App\Http\Controllers\PhanCongController;
 |--------------------------------------------------------------------------
 */
 
+// endpoint cũ, có thể giữ để tương thích nơi khác
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     $user = $request->user();
 
@@ -31,6 +33,7 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 });
 
 Route::post('/dangnhap', [AuthController::class, 'dangNhap']);
+Route::middleware('auth:sanctum')->get('/me', [AuthController::class, 'me']);
 
 // ==============================
 // PUBLIC API
@@ -53,26 +56,32 @@ Route::middleware('auth:sanctum')->group(function () {
     // ==========================
     // YÊU CẦU - ADMIN / DASHBOARD
     // ==========================
-    Route::get('/admin/yeucau', [YeuCauController::class, 'indexAdmin']);
-    Route::patch('/admin/yeucau/{id}', [YeuCauController::class, 'sua']);
+    Route::get('/admin/yeucau', [YeuCauAdminController::class, 'index']);
+    Route::post('/admin/yeucau/{id}/cap-nhat-trang-thai', [YeuCauAdminController::class, 'capNhatTrangThai']);
+    Route::post('/admin/yeucau/{id}/chuyen-xu-ly', [YeuCauAdminController::class, 'chuyenXuLy']);
+    Route::get('/admin/yeucau/{id}/lich-su', [YeuCauAdminController::class, 'lichSu']);
+    Route::post('/admin/yeucau/{id}/claim', [YeuCauAdminController::class, 'claim']);
 
-    // Route cũ giữ lại để tương thích nếu nơi khác còn dùng
-    Route::post('/admin/yeucau/{id}/giao', [YeuCauController::class, 'giao']);
-    Route::post('/admin/yeucau/{id}/trangthai', [YeuCauController::class, 'doiTrangThai']);
-    Route::get('/admin/yeucau/{id}/nhatky', [YeuCauController::class, 'nhatKy']);
+    // nếu nơi khác trong hệ thống còn dùng route admin cũ thì map về controller mới luôn
+    Route::post('/admin/yeucau/{id}/trangthai', [YeuCauAdminController::class, 'capNhatTrangThai']);
+    Route::get('/admin/yeucau/{id}/nhatky', [YeuCauAdminController::class, 'lichSu']);
 
-    // Route chuẩn mới
+    // nếu bạn chưa dùng PATCH sửa yêu cầu trong dashboard thì có thể bỏ route này
+    // Route::patch('/admin/yeucau/{id}', [YeuCauController::class, 'sua']);
+
+    // ==========================
+    // YÊU CẦU - AUTH USER FLOW
+    // ==========================
     Route::get('/yeucau/{id}', [YeuCauController::class, 'show']);
     Route::post('/yeucau/{id}/assign', [PhanCongController::class, 'assign']);
-    Route::post('/yeucau/{id}/claim', [YeuCauController::class, 'claim']);
+
+    // chuyển claim của frontend hiện tại sang controller admin mới để đồng bộ quyền
+    Route::post('/yeucau/{id}/claim', [YeuCauAdminController::class, 'claim']);
+    Route::post('/yeucau/{id}/nhan-xu-ly', [YeuCauAdminController::class, 'claim']);
+
+    // nếu frontend/user flow khác vẫn cần status/history cũ thì giữ
     Route::post('/yeucau/{id}/status', [YeuCauController::class, 'doiTrangThai']);
     Route::get('/yeucau/{id}/history', [YeuCauController::class, 'nhatKy']);
-
-    // Route tương thích frontend hiện tại
-    Route::post('/admin/yeucau/{id}/chuyen-xu-ly', [PhanCongController::class, 'assign']);
-    Route::post('/admin/yeucau/{id}/cap-nhat-trang-thai', [YeuCauController::class, 'doiTrangThai']);
-    Route::get('/admin/yeucau/{id}/lich-su', [YeuCauController::class, 'nhatKy']);
-    Route::post('/yeucau/{id}/nhan-xu-ly', [YeuCauController::class, 'claim']);
 
     // ==========================
     // CỤM

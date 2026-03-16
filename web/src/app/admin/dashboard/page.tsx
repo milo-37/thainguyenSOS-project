@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -56,8 +55,6 @@ const STATUS_MAP: Record<
   huy: { label: 'Hủy', variant: 'destructive' },
 };
 
-
-
 function statusClass(code: TrangThaiCode) {
   if (code === 'da_hoan_thanh') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
   if (code === 'da_chuyen_cum') return 'bg-blue-100 text-blue-700 border-blue-200';
@@ -72,7 +69,6 @@ function normalizeMediaUrl(raw?: string): string {
   const value = raw.trim();
   if (!value) return '';
 
-  // URL tuyệt đối nhưng đang sai dạng /yeucau/... => rewrite sang /storage/yeucau/...
   if (value.startsWith('http://') || value.startsWith('https://')) {
     try {
       const u = new URL(value);
@@ -92,22 +88,18 @@ function normalizeMediaUrl(raw?: string): string {
     return `http:${value}`;
   }
 
-  // path tương đối dạng /yeucau/... => rewrite
   if (value.startsWith('/yeucau/')) {
     return `${API_BASE}/storage${value}`;
   }
 
-  // path tương đối dạng yeucau/... => rewrite
   if (value.startsWith('yeucau/')) {
     return `${API_BASE}/storage/${value}`;
   }
 
-  // path đã đúng dạng /storage/...
   if (value.startsWith('/storage/')) {
     return `${API_BASE}${value}`;
   }
 
-  // filename trần
   return `${API_BASE}/storage/yeucau/${value}`;
 }
 
@@ -144,11 +136,6 @@ function normalizeMediaItem(m: any): Media | null {
     '';
 
   const url = normalizeMediaUrl(raw);
-
-  console.log('RAW MEDIA:', m);
-  console.log('RAW VALUE:', raw);
-  console.log('FINAL URL:', url);
-
   if (!url) return null;
 
   return {
@@ -204,6 +191,7 @@ export default function AdminDashboard() {
   const [loadingCurrentUser, setLoadingCurrentUser] = useState(true);
 
   const [clusters, setClusters] = useState<any[]>([]);
+  const [viewableCums, setViewableCums] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
 
   const [stats, setStats] = useState<any>(null);
@@ -257,10 +245,13 @@ export default function AdminDashboard() {
   useEffect(() => {
     Promise.all([getCurrentUser(), listClusters(''), listUsers('')])
       .then(([currentUser, clustersData, usersData]) => {
-        const roles: string[] = currentUser?.roles ?? [];
-        setIsAdmin(roles.includes('Quản trị'));
+        setIsAdmin(!!currentUser?.is_admin);
 
-        setClusters(clustersData?.data ?? []);
+        const allClusters = clustersData?.data ?? [];
+        const myViewableCums = currentUser?.viewable_cums ?? [];
+
+        setClusters(allClusters);
+        setViewableCums(!!currentUser?.is_admin ? allClusters : myViewableCums);
         setUsers(usersData?.data ?? []);
       })
       .catch(console.error)
@@ -268,13 +259,9 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => {
-    if (mode === 'unassigned') {
-      setStatusSel('tiep_nhan');
-    } else {
-      setStatusSel('');
-    }
-    setPage(1);
-  }, [mode]);
+  setStatusSel('');
+  setPage(1);
+}, [mode]);
 
   const reload = useCallback(async () => {
     const params: any = { per_page: 100, page };
@@ -299,43 +286,53 @@ export default function AdminDashboard() {
   }, [reload, loadingCurrentUser]);
 
   const points: MapPoint[] = useMemo(
-    () =>
-      (yc ?? [])
-        .filter((r: any) => r.lat != null && r.lng != null)
-        .map((r: any) => {
-          const loai = String(r.loai || r.loai_yeu_cau || '').toLowerCase();
+  () =>
+    (yc ?? [])
+      .filter((r: any) => r.lat != null && r.lng != null)
+      .map((r: any) => {
+        const loai = String(r.loai || r.loai_yeu_cau || '').toLowerCase();
+        const media: Media[] = buildMediaList(r.media || []);
 
-          const media: Media[] = buildMediaList(r.media || []);
+        const dsVatTu = r.vattu_chi_tiet || r.vattuChiTiet || [];
 
-          const vattu =
-            (r.vattu_chi_tiet || []).map((vt: any) => ({
-              ten: vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư',
-              so_luong: vt.so_luong,
-              don_vi: vt.don_vi ?? vt?.vattu?.don_vi ?? vt?.vattu?.donvi ?? vt.donvi ?? '',
-            })) ?? [];
+        const vattu =
+          dsVatTu.map((vt: any) => ({
+            ten: vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư',
+            so_luong: vt.so_luong,
+            don_vi: vt.don_vi ?? vt?.vattu?.don_vi ?? vt?.vattu?.donvi ?? vt.donvi ?? '',
+          })) ?? [];
 
-          return {
-            id: Number(r.id),
-            lat: Number(r.lat),
-            lng: Number(r.lng),
-            loai: loai === 'nhu_yeu_pham' ? 'nhu_yeu_pham' : 'cuu_nguoi',
-            trang_thai: (r.trang_thai ?? 'tiep_nhan') as MapPoint['trang_thai'],
-            ten: r.ten ?? r.ten_nguoigui ?? '',
-            sdt: r.so_dien_thoai ?? r.sdt_nguoigui ?? '',
-            noidung: r.noi_dung ?? r.noidung ?? '',
-            so_nguoi: r.so_nguoi ?? r.songuoi ?? undefined,
-            vattu,
-            media,
-            createdAt: r.created_at ?? null,
-          } as MapPoint;
-        }),
-    [yc]
-  );
+        return {
+          id: Number(r.id),
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          loai: loai === 'nhu_yeu_pham' ? 'nhu_yeu_pham' : 'cuu_nguoi',
+          trang_thai: (r.trang_thai ?? 'tiep_nhan') as MapPoint['trang_thai'],
+          ten: r.ten ?? r.ten_nguoigui ?? '',
+          sdt: r.so_dien_thoai ?? r.sdt_nguoigui ?? '',
+          noidung: r.noi_dung ?? r.noidung ?? '',
+          so_nguoi: r.so_nguoi ?? r.songuoi ?? undefined,
+          vattu,
+          media,
+          createdAt: r.created_at ?? null,
+        } as MapPoint;
+      }),
+  [yc]
+);
 
   const selectedRow = useMemo(() => {
     if (!selectedId) return null;
     return yc.find((r) => Number(r.id) === Number(selectedId)) ?? null;
   }, [yc, selectedId]);
+
+  const filteredTransferUsers = useMemo(() => {
+    if (!transferToCum) return users;
+    const selectedCumId = Number(transferToCum);
+
+    return users.filter((u: any) =>
+      (u.cums ?? []).some((c: any) => Number(c.id) === selectedCumId)
+    );
+  }, [users, transferToCum]);
 
   useEffect(() => {
     if (selectedId) setDetailOpen(true);
@@ -344,7 +341,7 @@ export default function AdminDashboard() {
   const openTransferDialog = (row: any) => {
     setOpenTransfer({ open: true, row });
     setTransferToUser('');
-    setTransferToCum('');
+    setTransferToCum(row?.cum_id ? String(row.cum_id) : '');
     setTransferNote('');
   };
 
@@ -352,13 +349,19 @@ export default function AdminDashboard() {
     const r = openTransfer.row;
     if (!r) return;
 
-    const payload: any = { ghi_chu: transferNote || undefined };
-    if (transferToUser) payload.user_id = +transferToUser;
-    if (!transferToUser && transferToCum) payload.cum_id = +transferToCum;
+    const payload: any = {
+      ghi_chu: transferNote || undefined,
+    };
 
-    if (!payload.user_id && !payload.cum_id) {
-      alert('Chọn 1 người hoặc 1 cụm để chuyển.');
+    if (!transferToCum) {
+      alert('Bắt buộc chọn cụm xử lý.');
       return;
+    }
+
+    payload.cum_id = +transferToCum;
+
+    if (transferToUser) {
+      payload.user_id = +transferToUser;
     }
 
     await transferAssignment(r.id, payload);
@@ -402,16 +405,17 @@ export default function AdminDashboard() {
                     setCumId(e.target.value);
                     setPage(1);
                   }}
-                  disabled={!isAdmin || loadingCurrentUser}
+                  disabled={loadingCurrentUser}
                 >
-                  <option value="">{isAdmin ? '— Tất cả cụm —' : '— Cụm của tôi —'}</option>
+                  <option value="">
+                    {isAdmin ? '— Tất cả cụm —' : '— Tất cả cụm trong phạm vi —'}
+                  </option>
 
-                  {isAdmin &&
-                    clusters.map((c: any) => (
-                      <option key={c.id} value={c.id}>
-                        {c.ten}
-                      </option>
-                    ))}
+                  {viewableCums.map((c: any) => (
+                    <option key={c.id} value={c.id}>
+                      {c.ten}
+                    </option>
+                  ))}
                 </select>
 
                 <select
@@ -443,8 +447,9 @@ export default function AdminDashboard() {
                       setPage(1);
                     }}
                   >
-                    Chưa phân công
+                    Chưa có người xử lý
                   </Button>
+
                   <Button
                     variant={mode === 'assigned' ? 'default' : 'ghost'}
                     size="sm"
@@ -456,6 +461,7 @@ export default function AdminDashboard() {
                   >
                     Được giao
                   </Button>
+
                   <Button
                     variant={mode === 'all' ? 'default' : 'ghost'}
                     size="sm"
@@ -465,7 +471,7 @@ export default function AdminDashboard() {
                       setPage(1);
                     }}
                   >
-                    Toàn hệ thống
+                    {isAdmin ? 'Toàn hệ thống' : 'Tất cả trong phạm vi'}
                   </Button>
                 </div>
               </div>
@@ -536,9 +542,12 @@ export default function AdminDashboard() {
               }}
               onTransfer={(id) => {
                 const row = yc.find((r) => Number(r.id) === Number(id));
-                if (row) openTransferDialog(row);
+                if (row?.permissions?.can_transfer) openTransferDialog(row);
               }}
               onClaim={async (id) => {
+                const row = yc.find((r) => Number(r.id) === Number(id));
+                if (!row?.permissions?.can_claim) return;
+
                 try {
                   if (!confirm(`Bạn muốn nhận xử lý yêu cầu #${id}?`)) return;
                   await claimYeuCau(Number(id));
@@ -597,9 +606,7 @@ export default function AdminDashboard() {
               const created = r.created_at ? new Date(r.created_at) : null;
               const code = ((r.trang_thai as TrangThaiCode) ?? 'tiep_nhan') as TrangThaiCode;
               const st = STATUS_MAP[code] ?? STATUS_MAP.tiep_nhan;
-
               const rowMedia = buildMediaList(r.media || []);
-console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', rowMedia);
 
               return (
                 <div
@@ -636,13 +643,10 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                               type="button"
                             >
                               <img
-  src={m.url}
-  alt=""
-  className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
-  onError={(e) => {
-    console.log('IMG ERROR SRC:', (e.currentTarget as HTMLImageElement).src);
-  }}
-/>
+                                src={m.url}
+                                alt=""
+                                className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
+                              />
                             </button>
                           ) : (
                             <button
@@ -693,9 +697,9 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                       )}
                     </div>
 
-                    {!!r.vattu_chi_tiet?.length && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {r.vattu_chi_tiet.map((vt: any, i: number) => (
+                    {!!(r.vattu_chi_tiet || r.vattuChiTiet)?.length && (
+  <div className="flex flex-wrap gap-1.5">
+    {(r.vattu_chi_tiet || r.vattuChiTiet).map((vt: any, i: number) => (
                           <span
                             key={vt.id || `${vt.vattu_id}-${i}`}
                             className="px-2 py-0.5 rounded-full border text-xs bg-slate-50"
@@ -722,7 +726,7 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                     </div>
 
                     <div className="flex flex-wrap justify-end gap-2">
-                      {r.trang_thai === 'tiep_nhan' && !r.duoc_giao_cho && (
+                      {r.permissions?.can_claim && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -742,50 +746,56 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                         </Button>
                       )}
 
-                      <Button
-                        size="sm"
-                        className="rounded-xl"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpenStatus({ open: true, row: r });
-                          setStatusValue((r.trang_thai as TrangThaiCode) ?? 'dang_xu_ly');
-                          setStatusNote('');
-                        }}
-                      >
-                        Cập nhật
-                      </Button>
+                      {r.permissions?.can_update_status && (
+                        <Button
+                          size="sm"
+                          className="rounded-xl"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenStatus({ open: true, row: r });
+                            setStatusValue((r.trang_thai as TrangThaiCode) ?? 'dang_xu_ly');
+                            setStatusNote('');
+                          }}
+                        >
+                          Cập nhật
+                        </Button>
+                      )}
 
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="rounded-xl"
-                        title="Chuyển xử lý"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openTransferDialog(r);
-                        }}
-                      >
-                        <ArrowRight className="w-4 h-4" />
-                      </Button>
+                      {r.permissions?.can_transfer && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="rounded-xl"
+                          title="Chuyển xử lý"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openTransferDialog(r);
+                          }}
+                        >
+                          <ArrowRight className="w-4 h-4" />
+                        </Button>
+                      )}
 
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="rounded-xl"
-                        title="Lịch sử"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          try {
-                            const data = await getYeuCauHistory(Number(r.id));
-                            const items = data?.data ?? data ?? [];
-                            setHistoryOpen({ open: true, items, id: Number(r.id) });
-                          } catch (err: any) {
-                            alert(err?.message || 'Không lấy được lịch sử');
-                          }
-                        }}
-                      >
-                        <ClipboardList className="w-4 h-4" />
-                      </Button>
+                      {r.permissions?.can_view_history && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="rounded-xl"
+                          title="Lịch sử"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const data = await getYeuCauHistory(Number(r.id));
+                              const items = data?.data ?? data ?? [];
+                              setHistoryOpen({ open: true, items, id: Number(r.id) });
+                            } catch (err: any) {
+                              alert(err?.message || 'Không lấy được lịch sử');
+                            }
+                          }}
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -888,13 +898,19 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                   <div className="text-sm">
                     <b>Số người:</b> {selectedRow.so_nguoi ?? selectedRow.songuoi ?? '—'}
                   </div>
+                  <div className="text-sm">
+                    <b>Cụm hiện tại:</b> {selectedRow.cum_id ?? '—'}
+                  </div>
+                  <div className="text-sm">
+                    <b>Được giao cho:</b> {selectedRow.duoc_giao_cho ?? '—'}
+                  </div>
                 </div>
 
-                {!!selectedRow.vattu_chi_tiet?.length && (
-                  <div className="rounded-2xl border bg-white p-4 shadow-sm">
-                    <div className="font-semibold mb-2">Vật tư cần</div>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedRow.vattu_chi_tiet.map((vt: any, i: number) => (
+                {!!(selectedRow.vattu_chi_tiet || selectedRow.vattuChiTiet)?.length && (
+  <div className="rounded-2xl border bg-white p-4 shadow-sm">
+    <div className="font-semibold mb-2">Vật tư cần</div>
+    <div className="flex flex-wrap gap-2">
+      {(selectedRow.vattu_chi_tiet || selectedRow.vattuChiTiet).map((vt: any, i: number) => (
                         <span
                           key={vt.id || `${vt.vattu_id}-${i}`}
                           className="px-2 py-1 rounded-full border text-xs bg-slate-50"
@@ -926,13 +942,10 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                             type="button"
                           >
                             <img
-  src={m.url}
-  alt=""
-  className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
-  onError={(e) => {
-    console.log('IMG ERROR SRC:', (e.currentTarget as HTMLImageElement).src);
-  }}
-/>
+                              src={m.url}
+                              alt=""
+                              className="w-full aspect-video object-cover rounded-xl border bg-slate-50 group-hover:opacity-95"
+                            />
                           </button>
                         ) : (
                           <button
@@ -957,7 +970,7 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                   <div className="font-semibold mb-3">Thao tác</div>
 
                   <div className="flex flex-wrap gap-2">
-                    {selectedRow.trang_thai === 'tiep_nhan' && !selectedRow.duoc_giao_cho && (
+                    {selectedRow.permissions?.can_claim && (
                       <Button
                         variant="outline"
                         className="rounded-xl"
@@ -975,42 +988,48 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                       </Button>
                     )}
 
-                    <Button
-                      variant="outline"
-                      className="rounded-xl"
-                      onClick={() => openTransferDialog(selectedRow)}
-                    >
-                      Chuyển xử lý
-                    </Button>
+                    {selectedRow.permissions?.can_transfer && (
+                      <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={() => openTransferDialog(selectedRow)}
+                      >
+                        Chuyển xử lý
+                      </Button>
+                    )}
 
-                    <Button
-                      className="rounded-xl"
-                      onClick={() => {
-                        setOpenStatus({ open: true, row: selectedRow });
-                        setStatusValue(
-                          ((selectedRow.trang_thai as TrangThaiCode) ?? 'dang_xu_ly') as TrangThaiCode
-                        );
-                        setStatusNote('');
-                      }}
-                    >
-                      Cập nhật trạng thái
-                    </Button>
+                    {selectedRow.permissions?.can_update_status && (
+                      <Button
+                        className="rounded-xl"
+                        onClick={() => {
+                          setOpenStatus({ open: true, row: selectedRow });
+                          setStatusValue(
+                            ((selectedRow.trang_thai as TrangThaiCode) ?? 'dang_xu_ly') as TrangThaiCode
+                          );
+                          setStatusNote('');
+                        }}
+                      >
+                        Cập nhật trạng thái
+                      </Button>
+                    )}
 
-                    <Button
-                      variant="outline"
-                      className="rounded-xl"
-                      onClick={async () => {
-                        try {
-                          const data = await getYeuCauHistory(Number(selectedRow.id));
-                          const items = data?.data ?? data ?? [];
-                          setHistoryOpen({ open: true, items, id: Number(selectedRow.id) });
-                        } catch (err: any) {
-                          alert(err?.message || 'Không lấy được lịch sử');
-                        }
-                      }}
-                    >
-                      Lịch sử
-                    </Button>
+                    {selectedRow.permissions?.can_view_history && (
+                      <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={async () => {
+                          try {
+                            const data = await getYeuCauHistory(Number(selectedRow.id));
+                            const items = data?.data ?? data ?? [];
+                            setHistoryOpen({ open: true, items, id: Number(selectedRow.id) });
+                          } catch (err: any) {
+                            alert(err?.message || 'Không lấy được lịch sử');
+                          }
+                        }}
+                      >
+                        Lịch sử
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1028,31 +1047,13 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
             <DialogHeader>
               <DialogTitle>Chuyển xử lý yêu cầu #{openTransfer.row?.id}</DialogTitle>
             </DialogHeader>
+
             <div className="grid gap-3">
               <div className="text-sm text-muted-foreground">
-                Chọn 1 trong 2: chuyển cho <b>một người</b> hoặc <b>một cụm</b>.
+                Bắt buộc chọn cụm. Nếu chọn thêm người thì yêu cầu sẽ được giao đích danh cho người đó và đồng bộ vào cụm đã chọn. Nếu chỉ chọn cụm thì yêu cầu sẽ được chuyển về cụm.
               </div>
 
               <div className="grid md:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-sm font-medium">Người nhận</label>
-                  <select
-                    className="mt-1 border rounded-xl h-10 px-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    value={transferToUser}
-                    onChange={(e) => {
-                      setTransferToUser(e.target.value);
-                      if (e.target.value) setTransferToCum('');
-                    }}
-                  >
-                    <option value="">— Không chọn —</option>
-                    {users.map((u: any) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.email})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
                 <div>
                   <label className="text-sm font-medium">Cụm nhận</label>
                   <select
@@ -1060,13 +1061,39 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                     value={transferToCum}
                     onChange={(e) => {
                       setTransferToCum(e.target.value);
-                      if (e.target.value) setTransferToUser('');
+
+                      if (
+                        transferToUser &&
+                        !users
+                          .find((u: any) => Number(u.id) === Number(transferToUser))
+                          ?.cums?.some((c: any) => Number(c.id) === Number(e.target.value))
+                      ) {
+                        setTransferToUser('');
+                      }
                     }}
                   >
-                    <option value="">— Không chọn —</option>
+                    <option value="">— Chọn cụm —</option>
                     {clusters.map((c: any) => (
                       <option key={c.id} value={c.id}>
                         {c.ten}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium">Người nhận (tùy chọn)</label>
+                  <select
+                    className="mt-1 border rounded-xl h-10 px-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    value={transferToUser}
+                    onChange={(e) => {
+                      setTransferToUser(e.target.value);
+                    }}
+                  >
+                    <option value="">— Chuyển về cụm, không chọn người —</option>
+                    {filteredTransferUsers.map((u: any) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.email})
                       </option>
                     ))}
                   </select>
@@ -1083,6 +1110,7 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                 />
               </div>
             </div>
+
             <DialogFooter>
               <Button
                 variant="outline"
@@ -1177,7 +1205,11 @@ console.log('ROW ID:', r.id, 'ORIGINAL MEDIA:', r.media, 'NORMALIZED MEDIA:', ro
                       {h.nguoi_thuc_hien ?? h.user?.name ?? ''}
                     </div>
                   </div>
-                  {h.ghi_chu ? <div className="mt-1 whitespace-pre-wrap">{h.ghi_chu}</div> : null}
+                  {(h.mo_ta_hien_thi || h.ghi_chu) ? (
+  <div className="mt-1 whitespace-pre-wrap">
+    {h.mo_ta_hien_thi || h.ghi_chu}
+  </div>
+) : null}
                 </div>
               ))}
               {!historyOpen.items?.length && (

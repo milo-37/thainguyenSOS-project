@@ -11,39 +11,64 @@ use Spatie\Permission\Models\Role;
 class UserController extends Controller
 {
     public function index(Request $req)
-    {
-        $q       = trim($req->get('q',''));
-        $perPage = max(1, (int)($req->get('per_page', 20)));
+{
+    $q       = trim($req->get('q', ''));
+    $perPage = max(1, (int) ($req->get('per_page', 200)));
 
-        $p = User::query()
-            ->with('roles:id,name')
-            ->when($q, function($x) use ($q){
-                $x->where('name','like',"%$q%")
-                    ->orWhere('email','like',"%$q%")
-                    ->orWhere('phone','like',"%$q%");
-            })
-            ->orderByDesc('id')
-            ->paginate($perPage);
+    $p = User::query()
+        ->with([
+            'roles:id,name',
+            'cums:id,ten',
+            'chiHuyCums:id,ten',
+        ])
+        ->when($q, function ($x) use ($q) {
+            $x->where(function ($sub) use ($q) {
+                $sub->where('name', 'like', "%$q%")
+                    ->orWhere('email', 'like', "%$q%")
+                    ->orWhere('phone', 'like', "%$q%");
+            });
+        })
+        ->orderByDesc('id')
+        ->paginate($perPage);
 
-        $map = $p->getCollection()->map(function(User $u){
-            $r = $u->roles->first();
-            return [
-                'id'        => $u->id,
-                'name'      => $u->name,
-                'email'     => $u->email,
-                'phone'     => $u->phone,
-                'role_id'   => $r->id   ?? null,
-                'role_name' => $r->name ?? null,
-            ];
-        });
+    $map = $p->getCollection()->map(function (User $u) {
+        $r = $u->roles->first();
 
-        return response()->json([
-            'data'         => $map,
-            'total'        => $p->total(),
-            'per_page'     => $p->perPage(),
-            'current_page' => $p->currentPage(),
+        $memberCums = collect($u->cums ?? [])->map(fn ($c) => [
+            'id' => (int) $c->id,
+            'ten' => $c->ten,
+            'loai' => 'member',
         ]);
-    }
+
+        $commandCums = collect($u->chiHuyCums ?? [])->map(fn ($c) => [
+            'id' => (int) $c->id,
+            'ten' => $c->ten,
+            'loai' => 'command',
+        ]);
+
+        $cums = $memberCums
+            ->merge($commandCums)
+            ->unique('id')
+            ->values();
+
+        return [
+            'id'        => $u->id,
+            'name'      => $u->name,
+            'email'     => $u->email,
+            'phone'     => $u->phone,
+            'role_id'   => $r->id ?? null,
+            'role_name' => $r->name ?? null,
+            'cums'      => $cums,
+        ];
+    });
+
+    return response()->json([
+        'data'         => $map,
+        'total'        => $p->total(),
+        'per_page'     => $p->perPage(),
+        'current_page' => $p->currentPage(),
+    ]);
+}
 
     public function store(Request $req)
     {
