@@ -305,42 +305,42 @@ class YeuCauAdminController extends Controller
      * GET /api/admin/yeucau/{id}/lich-su
      */
     public function lichSu(Request $req, $id)
-{
-    $yc = YeuCau::findOrFail($id);
-    $this->abortIfCannotView($req, $yc);
+    {
+        $yc = YeuCau::findOrFail($id);
+        $this->abortIfCannotView($req, $yc);
 
-    $items = $yc->nhatKy()
-        ->with([
-            'user:id,name,email',
-            'tuNguoi:id,name',
-            'denNguoi:id,name',
-        ])
-        ->orderByDesc('id')
-        ->get()
-        ->map(function ($r) {
-            return [
-                'id' => $r->id,
-                'hanh_dong' => $r->hanh_dong,
-                'trang_thai' => $r->den_trangthai ?? $r->tu_trangthai,
-                'trang_thai_hien_thi' => $this->labelTrangThai($r->den_trangthai ?? $r->tu_trangthai),
-                'tu_trang_thai' => $r->tu_trangthai,
-                'den_trang_thai' => $r->den_trangthai,
-                'tu_nguoi' => $r->tu_nguoi,
-                'den_nguoi' => $r->den_nguoi,
-                'tu_nguoi_ten' => $r->tuNguoi?->name,
-                'den_nguoi_ten' => $r->denNguoi?->name,
-                'ghi_chu' => $r->ghichu,
-                'mo_ta_hien_thi' => $this->buildHistoryDisplayText($r),
-                'created_at' => optional($r->tao_luc)->toDateTimeString(),
-                'user' => $r->user ? [
-                    'id' => $r->user->id,
-                    'name' => $r->user->name,
-                ] : null,
-            ];
-        });
+        $items = $yc->nhatKy()
+            ->with([
+                'user:id,name,email',
+                'tuNguoi:id,name',
+                'denNguoi:id,name',
+            ])
+            ->orderByDesc('id')
+            ->get()
+            ->map(function ($r) {
+                return [
+                    'id' => $r->id,
+                    'hanh_dong' => $r->hanh_dong,
+                    'trang_thai' => $r->den_trangthai ?? $r->tu_trangthai,
+                    'trang_thai_hien_thi' => $this->labelTrangThai($r->den_trangthai ?? $r->tu_trangthai),
+                    'tu_trang_thai' => $r->tu_trangthai,
+                    'den_trang_thai' => $r->den_trangthai,
+                    'tu_nguoi' => $r->tu_nguoi,
+                    'den_nguoi' => $r->den_nguoi,
+                    'tu_nguoi_ten' => $r->tuNguoi?->name,
+                    'den_nguoi_ten' => $r->denNguoi?->name,
+                    'ghi_chu' => $r->ghichu,
+                    'mo_ta_hien_thi' => $this->buildHistoryDisplayText($r),
+                    'created_at' => optional($r->tao_luc)->toDateTimeString(),
+                    'user' => $r->user ? [
+                        'id' => $r->user->id,
+                        'name' => $r->user->name,
+                    ] : null,
+                ];
+            });
 
-    return response()->json(['data' => $items]);
-}
+        return response()->json(['data' => $items]);
+    }
 
     /**
      * POST /api/admin/yeucau/{id}/cap-nhat-trang-thai
@@ -467,32 +467,32 @@ class YeuCauAdminController extends Controller
             $yc->save();
 
             $targetUserName = null;
-if ($targetUserId) {
-    $targetUserName = User::where('id', $targetUserId)->value('name');
-}
+            if ($targetUserId) {
+                $targetUserName = User::where('id', $targetUserId)->value('name');
+            }
 
-$targetCumName = DB::table('cum')->where('id', $targetCumId)->value('ten');
+            $targetCumName = DB::table('cum')->where('id', $targetCumId)->value('ten');
 
-$autoNote = $isTransferToUser
-    ? ('Phân công cho ' . ($targetUserName ?: ('ID ' . $targetUserId)))
-    : ('Chuyển cho ' . ($targetCumName ?: ('cụm ID ' . $targetCumId)));
+            $autoNote = $isTransferToUser
+                ? ('Phân công cho ' . ($targetUserName ?: ('ID ' . $targetUserId)))
+                : ('Chuyển cho ' . ($targetCumName ?: ('cụm ID ' . $targetCumId)));
 
-$finalNote = trim(implode(' | ', array_filter([
-    $autoNote,
-    $data['ghi_chu'] ?? null,
-])));
+            $finalNote = trim(implode(' | ', array_filter([
+                $autoNote,
+                $data['ghi_chu'] ?? null,
+            ])));
 
-YeuCauNhatKy::create([
-    'yeu_cau_id' => $yc->id,
-    'thuc_hien_boi' => $user->id ?? null,
-    'hanh_dong' => 'chuyen_xu_ly',
-    'tu_trangthai' => $from,
-    'den_trangthai' => $yc->trang_thai,
-    'tu_nguoi' => $oldUserId,
-    'den_nguoi' => $targetUserId,
-    'ghichu' => $finalNote,
-    'tao_luc' => now(),
-]);
+            YeuCauNhatKy::create([
+                'yeu_cau_id' => $yc->id,
+                'thuc_hien_boi' => $user->id ?? null,
+                'hanh_dong' => 'chuyen_xu_ly',
+                'tu_trangthai' => $from,
+                'den_trangthai' => $yc->trang_thai,
+                'tu_nguoi' => $oldUserId,
+                'den_nguoi' => $targetUserId,
+                'ghichu' => $finalNote,
+                'tao_luc' => now(),
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -504,83 +504,83 @@ YeuCauNhatKy::create([
     }
 
     private function getCumNameById(?int $cumId): ?string
-{
-    if (empty($cumId)) {
-        return null;
-    }
-
-    return DB::table('cum')->where('id', $cumId)->value('ten');
-}
-
-private function extractCumIdFromNote(?string $note): ?int
-{
-    if (!$note) {
-        return null;
-    }
-
-    if (preg_match('/cụm ID\s+(\d+)/iu', $note, $matches)) {
-        return (int) $matches[1];
-    }
-
-    return null;
-}
-
-private function buildHistoryDisplayText($log): ?string
-{
-    $note = trim((string) ($log->ghichu ?? ''));
-
-    if ($log->hanh_dong === 'chuyen_xu_ly') {
-        // Có den_nguoi => là phân công cho người
-        if (!empty($log->den_nguoi)) {
-            $tenNguoi = $log->denNguoi?->name ?? ('ID ' . $log->den_nguoi);
-            return "Phân công cho thành viên {$tenNguoi}";
+    {
+        if (empty($cumId)) {
+            return null;
         }
 
-        // Không có den_nguoi => là chuyển cho cụm
-        // Ưu tiên lấy tên cụm từ note
-        if (preg_match('/Chuyển cho (.+?)(\s*\||$)/u', $note, $matches)) {
-            $cumTen = trim($matches[1]);
+        return DB::table('cum')->where('id', $cumId)->value('ten');
+    }
 
-            // tránh trường hợp đã có sẵn chữ "cụm"
-            if (mb_stripos($cumTen, 'cụm') === false) {
+    private function extractCumIdFromNote(?string $note): ?int
+    {
+        if (!$note) {
+            return null;
+        }
+
+        if (preg_match('/cụm ID\s+(\d+)/iu', $note, $matches)) {
+            return (int) $matches[1];
+        }
+
+        return null;
+    }
+
+    private function buildHistoryDisplayText($log): ?string
+    {
+        $note = trim((string) ($log->ghichu ?? ''));
+
+        if ($log->hanh_dong === 'chuyen_xu_ly') {
+            // Có den_nguoi => là phân công cho người
+            if (!empty($log->den_nguoi)) {
+                $tenNguoi = $log->denNguoi?->name ?? ('ID ' . $log->den_nguoi);
+                return "Phân công cho thành viên {$tenNguoi}";
+            }
+
+            // Không có den_nguoi => là chuyển cho cụm
+            // Ưu tiên lấy tên cụm từ note
+            if (preg_match('/Chuyển cho (.+?)(\s*\||$)/u', $note, $matches)) {
+                $cumTen = trim($matches[1]);
+
+                // tránh trường hợp đã có sẵn chữ "cụm"
+                if (mb_stripos($cumTen, 'cụm') === false) {
+                    return "Chuyển cho cụm {$cumTen}";
+                }
+
+                return "Chuyển cho {$cumTen}";
+            }
+
+            $cumId = $this->extractCumIdFromNote($note);
+            $cumTen = $this->getCumNameById($cumId);
+
+            if ($cumTen) {
                 return "Chuyển cho cụm {$cumTen}";
             }
 
-            return "Chuyển cho {$cumTen}";
+            if ($cumId) {
+                return "Chuyển cho cụm {$cumId}";
+            }
+
+            return 'Chuyển xử lý';
         }
 
-        $cumId = $this->extractCumIdFromNote($note);
-        $cumTen = $this->getCumNameById($cumId);
-
-        if ($cumTen) {
-            return "Chuyển cho cụm {$cumTen}";
+        if ($log->hanh_dong === 'nhan_xu_ly') {
+            $tenNguoi = $log->denNguoi?->name ?? $log->user?->name;
+            return $tenNguoi ? "Thành viên {$tenNguoi} nhận xử lý" : 'Nhận xử lý';
         }
 
-        if ($cumId) {
-            return "Chuyển cho cụm {$cumId}";
+        if ($log->hanh_dong === 'doi_trang_thai') {
+            $from = $this->labelTrangThai($log->tu_trangthai);
+            $to = $this->labelTrangThai($log->den_trangthai);
+
+            if ($from && $to && $from !== $to) {
+                return "Đổi trạng thái từ {$from} sang {$to}";
+            }
+
+            return $note ?: 'Cập nhật trạng thái';
         }
 
-        return 'Chuyển xử lý';
+        return $note ?: null;
     }
-
-    if ($log->hanh_dong === 'nhan_xu_ly') {
-        $tenNguoi = $log->denNguoi?->name ?? $log->user?->name;
-        return $tenNguoi ? "Thành viên {$tenNguoi} nhận xử lý" : 'Nhận xử lý';
-    }
-
-    if ($log->hanh_dong === 'doi_trang_thai') {
-        $from = $this->labelTrangThai($log->tu_trangthai);
-        $to = $this->labelTrangThai($log->den_trangthai);
-
-        if ($from && $to && $from !== $to) {
-            return "Đổi trạng thái từ {$from} sang {$to}";
-        }
-
-        return $note ?: 'Cập nhật trạng thái';
-    }
-
-    return $note ?: null;
-}
 
     /**
      * POST /api/admin/yeucau/{id}/claim
@@ -646,4 +646,3 @@ private function buildHistoryDisplayText($log): ?string
         });
     }
 }
-

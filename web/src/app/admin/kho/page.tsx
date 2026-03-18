@@ -26,12 +26,26 @@ type VattuMaster = { id: number; ten: string; donvi?: string };
 
 type Row = { vat_tu_id: number; ten?: string; so_luong: number; don_vi?: string };
 
-type HistoryDetail = { vat_tu_id: number; ten?: string; so_luong: number; don_vi?: string };
+type HistoryActor = {
+  id: number;
+  ten: string;
+  email?: string;
+};
+
+type HistoryDetail = {
+  vat_tu_id: number;
+  ten?: string;
+  so_luong: number;
+  don_vi?: string;
+};
+
 type HistoryItem = {
   id: number;
   loai: 'nhap' | 'xuat' | 'chuyen';
   kho_from_id?: number | null;
   kho_to_id?: number | null;
+  nguoi_tao_id?: number | null;
+  nguoi_tao?: HistoryActor | null;
   ghi_chu?: string | null;
   created_at: string;
   chi_tiet: HistoryDetail[];
@@ -741,7 +755,7 @@ export default function KhoPage() {
 
               {(tab === 'xuat' || tab === 'chuyen') && (
                 <div className="text-xs text-gray-500">
-                  * FE chỉ cảnh báo/chặn để tránh sai thao tác. Backend vẫn nên validate để tránh race-condition.
+
                 </div>
               )}
             </div>
@@ -769,6 +783,7 @@ export default function KhoPage() {
                 <tr className="bg-gray-50 border-b">
                   <th className="p-3 text-left w-[190px]">Thời gian</th>
                   <th className="p-3 text-left w-[110px]">Loại</th>
+                  <th className="p-3 text-left w-[180px]">Người thực hiện</th>
                   <th className="p-3 text-left w-[180px]">Từ kho</th>
                   <th className="p-3 text-left w-[180px]">Đến kho</th>
                   <th className="p-3 text-left min-w-[240px]">Ghi chú</th>
@@ -778,26 +793,46 @@ export default function KhoPage() {
               <tbody>
                 {loadingData ? (
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-gray-500">
+                    <td colSpan={7} className="p-6 text-center text-gray-500">
                       Đang tải lịch sử…
                     </td>
                   </tr>
                 ) : (lichsu || []).length ? (
                   lichsu.map(p => (
                     <tr key={p.id} className="border-b last:border-0 align-top hover:bg-gray-50/60">
-                      <td className="p-3 text-gray-700 tabular-nums">{new Date(p.created_at).toLocaleString()}</td>
+                      <td className="p-3 text-gray-700 tabular-nums">
+                        {new Date(p.created_at).toLocaleString()}
+                      </td>
+
                       <td className="p-3">
                         <span className={cx('inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ring-1', badgeLoai(p.loai))}>
                           {p.loai.toUpperCase()}
                         </span>
                       </td>
+
+                      <td className="p-3 text-gray-800">
+                        {p.nguoi_tao ? (
+                          <div>
+                            <div className="font-medium">{p.nguoi_tao.ten}</div>
+                            {p.nguoi_tao.email ? (
+                              <div className="text-xs text-gray-500">{p.nguoi_tao.email}</div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">Không rõ</span>
+                        )}
+                      </td>
+
                       <td className="p-3 text-gray-800">
                         {p.kho_from_id ? (khoNameMap.get(p.kho_from_id) ?? `#${p.kho_from_id}`) : ''}
                       </td>
+
                       <td className="p-3 text-gray-800">
                         {p.kho_to_id ? (khoNameMap.get(p.kho_to_id) ?? `#${p.kho_to_id}`) : ''}
                       </td>
+
                       <td className="p-3 text-gray-700">{p.ghi_chu ?? ''}</td>
+
                       <td className="p-3">
                         <ul className="space-y-1">
                           {(p.chi_tiet || []).map((d, idx) => (
@@ -813,7 +848,7 @@ export default function KhoPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-gray-500">
+                    <td colSpan={7} className="p-8 text-center text-gray-500">
                       Chưa có lịch sử.
                     </td>
                   </tr>

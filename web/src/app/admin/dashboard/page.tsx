@@ -113,12 +113,12 @@ function inferMediaType(m: any): 'image' | 'video' {
 
   const url = String(
     m?.url ||
-      m?.file_url ||
-      m?.path ||
-      m?.duong_dan ||
-      m?.file_name ||
-      m?.ten_file ||
-      ''
+    m?.file_url ||
+    m?.path ||
+    m?.duong_dan ||
+    m?.file_name ||
+    m?.ten_file ||
+    ''
   ).toLowerCase();
 
   if (/\.(mp4|mov|avi|webm|mkv)(\?|$)/.test(url)) return 'video';
@@ -259,9 +259,9 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => {
-  setStatusSel('');
-  setPage(1);
-}, [mode]);
+    setStatusSel('');
+    setPage(1);
+  }, [mode]);
 
   const reload = useCallback(async () => {
     const params: any = { per_page: 100, page };
@@ -286,39 +286,39 @@ export default function AdminDashboard() {
   }, [reload, loadingCurrentUser]);
 
   const points: MapPoint[] = useMemo(
-  () =>
-    (yc ?? [])
-      .filter((r: any) => r.lat != null && r.lng != null)
-      .map((r: any) => {
-        const loai = String(r.loai || r.loai_yeu_cau || '').toLowerCase();
-        const media: Media[] = buildMediaList(r.media || []);
+    () =>
+      (yc ?? [])
+        .filter((r: any) => r.lat != null && r.lng != null)
+        .map((r: any) => {
+          const loai = String(r.loai || r.loai_yeu_cau || '').toLowerCase();
+          const media: Media[] = buildMediaList(r.media || []);
 
-        const dsVatTu = r.vattu_chi_tiet || r.vattuChiTiet || [];
+          const dsVatTu = r.vattu_chi_tiet || r.vattuChiTiet || [];
 
-        const vattu =
-          dsVatTu.map((vt: any) => ({
-            ten: vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư',
-            so_luong: vt.so_luong,
-            don_vi: vt.don_vi ?? vt?.vattu?.don_vi ?? vt?.vattu?.donvi ?? vt.donvi ?? '',
-          })) ?? [];
+          const vattu =
+            dsVatTu.map((vt: any) => ({
+              ten: vt?.vattu?.ten ?? vt.vattu_ten ?? vt.ten ?? 'Vật tư',
+              so_luong: vt.so_luong,
+              don_vi: vt.don_vi ?? vt?.vattu?.don_vi ?? vt?.vattu?.donvi ?? vt.donvi ?? '',
+            })) ?? [];
 
-        return {
-          id: Number(r.id),
-          lat: Number(r.lat),
-          lng: Number(r.lng),
-          loai: loai === 'nhu_yeu_pham' ? 'nhu_yeu_pham' : 'cuu_nguoi',
-          trang_thai: (r.trang_thai ?? 'tiep_nhan') as MapPoint['trang_thai'],
-          ten: r.ten ?? r.ten_nguoigui ?? '',
-          sdt: r.so_dien_thoai ?? r.sdt_nguoigui ?? '',
-          noidung: r.noi_dung ?? r.noidung ?? '',
-          so_nguoi: r.so_nguoi ?? r.songuoi ?? undefined,
-          vattu,
-          media,
-          createdAt: r.created_at ?? null,
-        } as MapPoint;
-      }),
-  [yc]
-);
+          return {
+            id: Number(r.id),
+            lat: Number(r.lat),
+            lng: Number(r.lng),
+            loai: loai === 'nhu_yeu_pham' ? 'nhu_yeu_pham' : 'cuu_nguoi',
+            trang_thai: (r.trang_thai ?? 'tiep_nhan') as MapPoint['trang_thai'],
+            ten: r.ten ?? r.ten_nguoigui ?? '',
+            sdt: r.so_dien_thoai ?? r.sdt_nguoigui ?? '',
+            noidung: r.noi_dung ?? r.noidung ?? '',
+            so_nguoi: r.so_nguoi ?? r.songuoi ?? undefined,
+            vattu,
+            media,
+            createdAt: r.created_at ?? null,
+          } as MapPoint;
+        }),
+    [yc]
+  );
 
   const selectedRow = useMemo(() => {
     if (!selectedId) return null;
@@ -698,8 +698,8 @@ export default function AdminDashboard() {
                     </div>
 
                     {!!(r.vattu_chi_tiet || r.vattuChiTiet)?.length && (
-  <div className="flex flex-wrap gap-1.5">
-    {(r.vattu_chi_tiet || r.vattuChiTiet).map((vt: any, i: number) => (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(r.vattu_chi_tiet || r.vattuChiTiet).map((vt: any, i: number) => (
                           <span
                             key={vt.id || `${vt.vattu_id}-${i}`}
                             className="px-2 py-0.5 rounded-full border text-xs bg-slate-50"
@@ -907,10 +907,10 @@ export default function AdminDashboard() {
                 </div>
 
                 {!!(selectedRow.vattu_chi_tiet || selectedRow.vattuChiTiet)?.length && (
-  <div className="rounded-2xl border bg-white p-4 shadow-sm">
-    <div className="font-semibold mb-2">Vật tư cần</div>
-    <div className="flex flex-wrap gap-2">
-      {(selectedRow.vattu_chi_tiet || selectedRow.vattuChiTiet).map((vt: any, i: number) => (
+                  <div className="rounded-2xl border bg-white p-4 shadow-sm">
+                    <div className="font-semibold mb-2">Vật tư cần</div>
+                    <div className="flex flex-wrap gap-2">
+                      {(selectedRow.vattu_chi_tiet || selectedRow.vattuChiTiet).map((vt: any, i: number) => (
                         <span
                           key={vt.id || `${vt.vattu_id}-${i}`}
                           className="px-2 py-1 rounded-full border text-xs bg-slate-50"
@@ -1206,10 +1206,10 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                   {(h.mo_ta_hien_thi || h.ghi_chu) ? (
-  <div className="mt-1 whitespace-pre-wrap">
-    {h.mo_ta_hien_thi || h.ghi_chu}
-  </div>
-) : null}
+                    <div className="mt-1 whitespace-pre-wrap">
+                      {h.mo_ta_hien_thi || h.ghi_chu}
+                    </div>
+                  ) : null}
                 </div>
               ))}
               {!historyOpen.items?.length && (
