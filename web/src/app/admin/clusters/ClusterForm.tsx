@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { createCluster, getCluster, updateCluster } from '@/lib/api';
 import MapPicker from '@/components/MapPicker';
 import MemberSheet from '@/components/MemberSheet';
+import { listUsers } from '@/lib/api';
 
 type FormState = {
   ten: string;
@@ -109,25 +110,12 @@ export default function ClusterForm() {
 
   const fetchUsers = async () => {
   try {
-    if (!API) throw new Error('Missing NEXT_PUBLIC_API_URL. Check .env.local then restart dev server.');
-
-    setLoadingUsers(true);
-    const token = localStorage.getItem('token');
-    const res = await fetch(`${API}/users`, {
-      headers: {
-        Authorization: `Bearer ${token ?? ''}`,
-        Accept: 'application/json',
-      },
-      cache: 'no-store',
-    });
-
-    if (!res.ok) throw new Error(await res.text());
-    const d = await res.json();
-    setUsers(d?.data ?? []);
+    const res = await listUsers({});
+    const rows = res?.data?.data ?? res?.data ?? res ?? [];
+    setUsers(Array.isArray(rows) ? rows : []);
   } catch (err) {
-    console.error('Load users failed', err);
-  } finally {
-    setLoadingUsers(false);
+    console.error('fetchUsers failed:', err);
+    setUsers([]);
   }
 };
 

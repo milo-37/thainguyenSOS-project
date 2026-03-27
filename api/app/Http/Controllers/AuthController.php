@@ -36,48 +36,53 @@ class AuthController extends Controller
     }
 
     public function me(Request $request)
-    {
-        /** @var \App\Models\User $user */
-        $user = $request->user();
+{
+    /** @var \App\Models\User $user */
+    $user = $request->user();
 
-        $membershipCums = method_exists($user, 'cums')
-            ? $user->cums()->get(['cum.id', 'cum.ten'])
-            : collect();
+    $membershipCums = method_exists($user, 'cums')
+        ? $user->cums()->get(['cum.id', 'cum.ten'])
+        : collect();
 
-        $commandCums = method_exists($user, 'chiHuyCums')
-            ? $user->chiHuyCums()->get(['id', 'ten'])->map(function ($c) {
-                return (object) [
-                    'id' => $c->id,
-                    'ten' => $c->ten,
-                ];
-            })
-            : collect();
+    $commandCums = method_exists($user, 'chiHuyCums')
+        ? $user->chiHuyCums()->get(['id', 'ten'])->map(function ($c) {
+            return (object) [
+                'id' => $c->id,
+                'ten' => $c->ten,
+            ];
+        })
+        : collect();
 
-        $viewable = $membershipCums
-            ->map(fn ($c) => [
+    $viewable = $membershipCums
+        ->map(fn ($c) => [
+            'id' => (int) $c->id,
+            'ten' => $c->ten,
+        ])
+        ->merge(
+            $commandCums->map(fn ($c) => [
                 'id' => (int) $c->id,
                 'ten' => $c->ten,
             ])
-            ->merge(
-                $commandCums->map(fn ($c) => [
-                    'id' => (int) $c->id,
-                    'ten' => $c->ten,
-                ])
-            )
-            ->unique('id')
-            ->values();
+        )
+        ->unique('id')
+        ->values();
 
-        return response()->json([
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'roles' => method_exists($user, 'getRoleNames')
-                ? $user->getRoleNames()->values()
-                : [],
-            'is_admin' => method_exists($user, 'hasAnyRole')
-                ? $user->hasAnyRole(['Quản trị', 'admin', 'super_admin'])
-                : false,
-            'viewable_cums' => $viewable,
-        ]);
-    }
+    $roles = method_exists($user, 'getRoleNames')
+        ? $user->getRoleNames()->values()->all()
+        : [];
+
+    $permissions = method_exists($user, 'getAllPermissions')
+        ? $user->getAllPermissions()->pluck('name')->values()->all()
+        : [];
+
+    return response()->json([
+        'id' => $user->id,
+        'name' => $user->name,
+        'email' => $user->email,
+        'roles' => $roles,
+        'permissions' => $permissions,
+        'is_admin' => in_array('Quản trị', $roles),
+        'viewable_cums' => $viewable,
+    ]);
+}
 }

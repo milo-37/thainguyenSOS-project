@@ -63,6 +63,8 @@ function statusClass(code: TrangThaiCode) {
   return 'bg-slate-100 text-slate-700 border-slate-200';
 }
 
+
+
 function normalizeMediaUrl(raw?: string): string {
   if (!raw || typeof raw !== 'string') return '';
 
@@ -193,6 +195,8 @@ export default function AdminDashboard() {
   const [clusters, setClusters] = useState<any[]>([]);
   const [viewableCums, setViewableCums] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [loadingTransferUsers, setLoadingTransferUsers] = useState(false);
+  const [loadedTransferUsers, setLoadedTransferUsers] = useState(false);
 
   const [stats, setStats] = useState<any>(null);
   const [yc, setYc] = useState<any[]>([]);
@@ -206,6 +210,7 @@ export default function AdminDashboard() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const [vatTuOpen, setVatTuOpen] = useState(false);
+  const [vatTuTheoCumOpen, setVatTuTheoCumOpen] = useState(false);
 
   const [openTransfer, setOpenTransfer] = useState<{ open: boolean; row: any | null }>({
     open: false,
@@ -234,6 +239,69 @@ export default function AdminDashboard() {
   const [lbItems, setLbItems] = useState<Media[]>([]);
   const [lbIndex, setLbIndex] = useState(0);
 
+  const vatTuItems = useMemo(() => {
+    const raw = stats?.vat_tu?.du_thieu || [];
+
+    type VatTuState = 'thieu' | 'du' | 'du_vua';
+    type VatTuItem = {
+      vattu_id?: number | string;
+      ten?: string;
+      ton: number;
+      can: number;
+      du: number;
+      absDu: number;
+      state: VatTuState;
+      [key: string]: any;
+    };
+
+    const priority: Record<VatTuState, number> = {
+      thieu: 0,
+      du_vua: 1,
+      du: 2,
+    };
+
+    return [...raw]
+      .map((x: any): VatTuItem => {
+        const ton = Number(x.ton ?? 0);
+        const can = Number(x.can ?? 0);
+        const duRaw = x.du != null ? Number(x.du) : ton - can;
+
+        const state: VatTuState =
+          duRaw < 0 ? 'thieu' : duRaw > 0 ? 'du' : 'du_vua';
+
+        return {
+          ...x,
+          ton,
+          can,
+          du: duRaw,
+          absDu: Math.abs(duRaw),
+          state,
+        };
+      })
+      .sort((a, b) => {
+        if (priority[a.state] !== priority[b.state]) {
+          return priority[a.state] - priority[b.state];
+        }
+
+        return b.absDu - a.absDu;
+      });
+  }, [stats]);
+
+  const vatTuSummary = useMemo(() => {
+    const thieuItems = vatTuItems.filter((x) => x.state === 'thieu');
+    const duItems = vatTuItems.filter((x) => x.state === 'du');
+    const duVuaItems = vatTuItems.filter((x) => x.state === 'du_vua');
+
+    return {
+      soMatHangThieu: thieuItems.length,
+      soMatHangDu: duItems.length,
+      soMatHangDuVua: duVuaItems.length,
+      tongSoLuongThieu: thieuItems.reduce((sum, x) => sum + x.absDu, 0),
+      tongSoLuongDu: duItems.reduce((sum, x) => sum + x.du, 0),
+      tongMatHang: vatTuItems.length,
+    };
+  }, [vatTuItems]);
+
   const lbPrev = useCallback(() => {
     setLbIndex((i) => (i - 1 + lbItems.length) % lbItems.length);
   }, [lbItems.length]);
@@ -243,8 +311,8 @@ export default function AdminDashboard() {
   }, [lbItems.length]);
 
   useEffect(() => {
-    Promise.all([getCurrentUser(), listClusters(''), listUsers('')])
-      .then(([currentUser, clustersData, usersData]) => {
+    Promise.all([getCurrentUser(), listClusters('')])
+      .then(([currentUser, clustersData]) => {
         setIsAdmin(!!currentUser?.is_admin);
 
         const allClusters = clustersData?.data ?? [];
@@ -252,7 +320,6 @@ export default function AdminDashboard() {
 
         setClusters(allClusters);
         setViewableCums(!!currentUser?.is_admin ? allClusters : myViewableCums);
-        setUsers(usersData?.data ?? []);
       })
       .catch(console.error)
       .finally(() => setLoadingCurrentUser(false));
@@ -338,7 +405,25 @@ export default function AdminDashboard() {
     if (selectedId) setDetailOpen(true);
   }, [selectedId]);
 
-  const openTransferDialog = (row: any) => {
+  const ensureTransferUsers = useCallback(async () => {
+    if (loadedTransferUsers) return;
+
+    setLoadingTransferUsers(true);
+    try {
+      const usersData = await listUsers({ for_transfer: 1 });
+      setUsers(usersData?.data ?? []);
+      setLoadedTransferUsers(true);
+    } catch (err) {
+      console.error('Load transfer users failed:', err);
+      setUsers([]);
+    } finally {
+      setLoadingTransferUsers(false);
+    }
+  }, [loadedTransferUsers]);
+
+  const openTransferDialog = async (row: any) => {
+    await ensureTransferUsers();
+
     setOpenTransfer({ open: true, row });
     setTransferToUser('');
     setTransferToCum(row?.cum_id ? String(row.cum_id) : '');
@@ -390,6 +475,8 @@ export default function AdminDashboard() {
     setLbIndex(index);
     setLbOpen(true);
   };
+
+
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -505,23 +592,37 @@ export default function AdminDashboard() {
 
             <div className="rounded-xl border bg-white shadow-sm px-4 py-3 flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[11px] text-muted-foreground leading-none">Nhu yếu phẩm chưa xử lý</div>
+                <div className="text-[11px] text-muted-foreground leading-none">
+                  Nhu yếu phẩm đang thiếu
+                </div>
                 <div className="text-2xl font-bold leading-tight">
-                  {stats.vat_tu?.tong_nhu_yeu_pham_chua_xu_ly ?? 0}
+                  {vatTuSummary.tongSoLuongThieu.toLocaleString('vi-VN')}
                 </div>
                 <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                  Thiếu/dư theo tồn kho & nhu cầu
+                  {vatTuSummary.soMatHangThieu} mặt hàng thiếu theo tồn kho & nhu cầu
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="rounded-lg h-9 px-3 shrink-0"
-                onClick={() => setVatTuOpen(true)}
-              >
-                <Package2 className="w-4 h-4 mr-2" />
-                Xem
-              </Button>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg h-9 px-3"
+                  onClick={() => setVatTuOpen(true)}
+                >
+                  <Package2 className="w-4 h-4 mr-2" />
+                  Tổng
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg h-9 px-3"
+                  onClick={() => setVatTuTheoCumOpen(true)}
+                >
+                  Theo cụm
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -540,9 +641,11 @@ export default function AdminDashboard() {
                 setLbIndex(index);
                 setLbOpen(true);
               }}
-              onTransfer={(id) => {
+              onTransfer={async (id) => {
                 const row = yc.find((r) => Number(r.id) === Number(id));
-                if (row?.permissions?.can_transfer) openTransferDialog(row);
+                if (row?.permissions?.can_transfer) {
+                  await openTransferDialog(row);
+                }
               }}
               onClaim={async (id) => {
                 const row = yc.find((r) => Number(r.id) === Number(id));
@@ -767,9 +870,9 @@ export default function AdminDashboard() {
                           size="icon"
                           className="rounded-xl"
                           title="Chuyển xử lý"
-                          onClick={(e) => {
+                          onClick={async (e) => {
                             e.stopPropagation();
-                            openTransferDialog(r);
+                            await openTransferDialog(r);
                           }}
                         >
                           <ArrowRight className="w-4 h-4" />
@@ -810,33 +913,152 @@ export default function AdminDashboard() {
               <DialogTitle>Nhu yếu phẩm (Thiếu / Dư)</DialogTitle>
             </DialogHeader>
 
-            <div className="max-h-[60vh] overflow-auto space-y-2">
-              {(stats?.vat_tu?.du_thieu || []).map((x: any, idx: number) => {
-                const du = Number(x.du ?? 0);
-                const isThieu = du < 0;
-                const badgeCls = isThieu
-                  ? 'bg-rose-100 text-rose-700 border-rose-200'
-                  : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="rounded-xl border bg-rose-50 px-3 py-2">
+                  <div className="text-xs text-rose-700">Vật tư thiếu</div>
+                  <div className="text-lg font-bold text-rose-800">
+                    {vatTuSummary.soMatHangThieu.toLocaleString('vi-VN')}
+                  </div>
+                </div>
 
-                return (
-                  <div key={x.vattu_id ?? idx} className="rounded-xl border p-3 bg-white">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="font-semibold truncate">{x.ten ?? '—'}</div>
-                      <Badge variant="outline" className={`rounded-full ${badgeCls}`}>
-                        {isThieu ? `Thiếu ${Math.abs(du)}` : `Dư ${du}`}
+                <div className="rounded-xl border bg-emerald-50 px-3 py-2">
+                  <div className="text-xs text-emerald-700">Vật tư dư</div>
+                  <div className="text-lg font-bold text-emerald-800">
+                    {vatTuSummary.soMatHangDu.toLocaleString('vi-VN')}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border bg-slate-50 px-3 py-2">
+                  <div className="text-xs text-slate-600">Đủ nhu cầu</div>
+                  <div className="text-lg font-bold text-slate-800">
+                    {vatTuSummary.soMatHangDuVua.toLocaleString('vi-VN')}
+                  </div>
+                </div>
+              </div>
+
+              <div className="max-h-[60vh] overflow-auto space-y-2 pr-1">
+                {vatTuItems.map((x: any, idx: number) => {
+                  const badgeCls =
+                    x.state === 'thieu'
+                      ? 'bg-rose-100 text-rose-700 border-rose-200'
+                      : x.state === 'du'
+                        ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-100 text-slate-700 border-slate-200';
+
+                  const badgeText =
+                    x.state === 'thieu'
+                      ? `Thiếu ${x.absDu}`
+                      : x.state === 'du'
+                        ? `Dư ${x.du}`
+                        : 'Đủ';
+
+                  return (
+                    <div key={x.vattu_id ?? idx} className="rounded-xl border p-3 bg-white">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-semibold truncate">{x.ten ?? '—'}</div>
+                        <Badge variant="outline" className={`rounded-full ${badgeCls}`}>
+                          {badgeText}
+                        </Badge>
+                      </div>
+
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Còn: <b className="text-foreground">{x.ton.toLocaleString('vi-VN')}</b> ·
+                        Cần: <b className="text-foreground"> {x.can.toLocaleString('vi-VN')}</b>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {!vatTuItems.length && (
+                  <div className="py-10 text-center text-sm text-muted-foreground">
+                    Không có dữ liệu thiếu/dư.
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={vatTuTheoCumOpen} onOpenChange={setVatTuTheoCumOpen}>
+          <DialogContent className="sm:max-w-[900px] rounded-2xl">
+            <DialogHeader>
+              <DialogTitle>Thiếu / Dư nhu yếu phẩm theo cụm</DialogTitle>
+            </DialogHeader>
+
+            <div className="max-h-[70vh] overflow-auto space-y-3 pr-1">
+              {(stats?.vat_tu_theo_cum || []).map((cum: any) => (
+                <div key={cum.cum_id} className="rounded-2xl border bg-white p-4 shadow-sm">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-base">{cum.cum_ten}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Thiếu {Number(cum.mat_hang_thieu || 0).toLocaleString('vi-VN')} mặt hàng ·
+                        Dư {Number(cum.mat_hang_du || 0).toLocaleString('vi-VN')} mặt hàng ·
+                        Đủ {Number(cum.mat_hang_du_vua || 0).toLocaleString('vi-VN')} mặt hàng
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline" className="rounded-full bg-rose-100 text-rose-700 border-rose-200">
+                        Thiếu {Number(cum.tong_so_luong_thieu || 0).toLocaleString('vi-VN')}
+                      </Badge>
+                      <Badge variant="outline" className="rounded-full bg-emerald-100 text-emerald-700 border-emerald-200">
+                        Dư {Number(cum.tong_so_luong_du || 0).toLocaleString('vi-VN')}
                       </Badge>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Còn: <b className="text-foreground">{Number(x.ton ?? 0)}</b> · Cần:{' '}
-                      <b className="text-foreground">{Number(x.can ?? 0)}</b>
-                    </div>
                   </div>
-                );
-              })}
 
-              {!stats?.vat_tu?.du_thieu?.length && (
+                  {!!cum.items?.length ? (
+                    <div className="mt-3 grid gap-2">
+                      {cum.items.map((item: any, idx: number) => {
+                        const du = Number(item.du ?? 0);
+
+                        const badgeCls =
+                          du < 0
+                            ? 'bg-rose-100 text-rose-700 border-rose-200'
+                            : du > 0
+                              ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200';
+
+                        const badgeText =
+                          du < 0 ? `Thiếu ${Math.abs(du)}` : du > 0 ? `Dư ${du}` : 'Đủ';
+
+                        return (
+                          <div
+                            key={`${cum.cum_id}-${item.vattu_id ?? idx}`}
+                            className="rounded-xl border p-3 bg-slate-50"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="font-medium truncate">
+                                {item.ten ?? '—'}
+                                {item.donvi ? ` (${item.donvi})` : ''}
+                              </div>
+
+                              <Badge variant="outline" className={`rounded-full ${badgeCls}`}>
+                                {badgeText}
+                              </Badge>
+                            </div>
+
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Tồn: <b className="text-foreground">{Number(item.ton ?? 0).toLocaleString('vi-VN')}</b> ·
+                              Cần: <b className="text-foreground"> {Number(item.can ?? 0).toLocaleString('vi-VN')}</b>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-3 text-sm text-muted-foreground">
+                      Cụm này hiện chưa có dữ liệu tồn kho hoặc nhu cầu vật tư.
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {!(stats?.vat_tu_theo_cum || []).length && (
                 <div className="py-10 text-center text-sm text-muted-foreground">
-                  Không có dữ liệu thiếu/dư.
+                  Không có dữ liệu theo cụm.
                 </div>
               )}
             </div>
@@ -992,7 +1214,9 @@ export default function AdminDashboard() {
                       <Button
                         variant="outline"
                         className="rounded-xl"
-                        onClick={() => openTransferDialog(selectedRow)}
+                        onClick={async () => {
+                          await openTransferDialog(selectedRow);
+                        }}
                       >
                         Chuyển xử lý
                       </Button>
@@ -1084,13 +1308,18 @@ export default function AdminDashboard() {
                 <div>
                   <label className="text-sm font-medium">Người nhận (tùy chọn)</label>
                   <select
-                    className="mt-1 border rounded-xl h-10 px-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    className="mt-1 border rounded-xl h-10 px-3 w-full bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100 disabled:text-slate-500"
                     value={transferToUser}
                     onChange={(e) => {
                       setTransferToUser(e.target.value);
                     }}
+                    disabled={loadingTransferUsers}
                   >
-                    <option value="">— Chuyển về cụm, không chọn người —</option>
+                    <option value="">
+                      {loadingTransferUsers
+                        ? 'Đang tải danh sách người nhận...'
+                        : '— Chuyển về cụm, không chọn người —'}
+                    </option>
                     {filteredTransferUsers.map((u: any) => (
                       <option key={u.id} value={u.id}>
                         {u.name} ({u.email})

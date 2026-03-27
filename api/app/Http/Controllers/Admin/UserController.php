@@ -12,8 +12,76 @@ class UserController extends Controller
 {
     public function index(Request $req)
 {
-    $q       = trim($req->get('q', ''));
+    $authUser = $req->user();
+
+    $q = trim($req->get('q', ''));
     $perPage = max(1, (int) ($req->get('per_page', 200)));
+    $forTransfer = (int) $req->get('for_transfer', 0) === 1;
+
+    // ==========================
+    // MODE: dùng cho popup chuyển xử lý
+    // Không cần users.view
+    // ==========================
+    if ($forTransfer) {
+        $canTransfer = $authUser->is_admin || $authUser->can('yeucau.chuyen_xu_ly');
+
+        if (!$canTransfer) {
+            return response()->json([
+                'message' => 'User does not have the right permissions.'
+            ], 403);
+        }
+
+        $rows = User::query()
+            ->select('id', 'name', 'email')
+            ->with([
+                'cums:id,ten',
+                'chiHuyCums:id,ten',
+            ])
+            ->orderBy('name')
+            ->get()
+            ->map(function (User $u) {
+                $memberCums = collect($u->cums ?? [])->map(fn ($c) => [
+                    'id' => (int) $c->id,
+                    'ten' => $c->ten,
+                    'loai' => 'member',
+                ]);
+
+                $commandCums = collect($u->chiHuyCums ?? [])->map(fn ($c) => [
+                    'id' => (int) $c->id,
+                    'ten' => $c->ten,
+                    'loai' => 'command',
+                ]);
+
+                $cums = $memberCums
+                    ->merge($commandCums)
+                    ->unique('id')
+                    ->values();
+
+                return [
+                    'id' => $u->id,
+                    'name' => $u->name,
+                    'email' => $u->email,
+                    'cums' => $cums,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'data' => $rows,
+        ]);
+    }
+
+    // ==========================
+    // MODE: quản trị người dùng bình thường
+    // Cần users.view
+    // ==========================
+    $canViewUsers = $authUser->is_admin || $authUser->can('users.view');
+
+    if (!$canViewUsers) {
+        return response()->json([
+            'message' => 'User does not have the right permissions.'
+        ], 403);
+    }
 
     $p = User::query()
         ->with([

@@ -9,9 +9,9 @@ use App\Http\Controllers\VatTuController;
 use App\Http\Controllers\VietMapController;
 use App\Http\Controllers\PhanCongController;
 use App\Http\Controllers\Admin\KhoTonController;
-use App\Http\Controllers\Admin\UserController;
-use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\YeuCauAdminController;
+use App\Http\Controllers\Admin\UserController as AdminUserController;
+use App\Http\Controllers\Admin\RoleController as AdminRoleController;
 
 /*
 |--------------------------------------------------------------------------
@@ -106,26 +106,26 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/thongke', [\App\Http\Controllers\ThongKeController::class, 'index']);
 
     // ==========================
-    // USERS
-    // ==========================
-    Route::get('/users', [UserController::class, 'index']);
-    Route::post('/users', [UserController::class, 'store']);
-    Route::put('/users/{id}', [UserController::class, 'update']);
-    Route::delete('/users/{id}', [UserController::class, 'destroy']);
-
-    // ==========================
-    // ROLES / PERMISSIONS
+    // ADMIN USERS / ROLES / PERMISSIONS
     // ==========================
     Route::prefix('admin')->group(function () {
-        Route::get('/roles', [RoleController::class, 'index']);
-        Route::post('/roles', [RoleController::class, 'store']);
-        Route::put('/roles/{id}', [RoleController::class, 'update']);
-        Route::delete('/roles/{id}', [RoleController::class, 'destroy']);
+        Route::get('/me', [AuthController::class, 'me']);
 
-        Route::get('/permissions', [RoleController::class, 'permissions']);
-        Route::get('/roles/{role}/permissions', [RoleController::class, 'rolePermissions']);
-        Route::post('/roles/{role}/permissions', [RoleController::class, 'syncRolePermissions']);
+        Route::get('/users', [AdminUserController::class, 'index']);
+        Route::post('/users', [AdminUserController::class, 'store'])->middleware('permission:users.create');
+        Route::put('/users/{id}', [AdminUserController::class, 'update'])->middleware('permission:users.update');
+        Route::delete('/users/{id}', [AdminUserController::class, 'destroy'])->middleware('permission:users.delete');
+
+        Route::get('/roles', [AdminRoleController::class, 'index'])->middleware('permission:roles.view');
+        Route::post('/roles', [AdminRoleController::class, 'store'])->middleware('permission:roles.create');
+        Route::put('/roles/{id}', [AdminRoleController::class, 'update'])->middleware('permission:roles.update');
+        Route::delete('/roles/{id}', [AdminRoleController::class, 'destroy'])->middleware('permission:roles.delete');
+
+        Route::get('/permissions', [AdminRoleController::class, 'permissions'])->middleware('permission:permissions.view');
+        Route::get('/roles/{role}/permissions', [AdminRoleController::class, 'rolePermissions'])->middleware('permission:roles.view');
+        Route::post('/roles/{role}/permissions', [AdminRoleController::class, 'syncRolePermissions'])->middleware('permission:roles.assign_permissions');
     });
+
 
     // ==========================
     // KHO

@@ -1,27 +1,35 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  // USERS
-  listUsers, getUser, createUser, updateUser, deleteUser,
-  // ROLES
-  listRoles, createRole, updateRole, deleteRole,
-  // PERMISSIONS
-  listPermissions, getRolePermissions, saveRolePermissions,
+  listUsers,
+  createUser,
+  updateUser,
+  deleteUser,
+  listRoles,
+  createRole,
+  updateRole,
+  deleteRole,
+  listPermissions,
+  getRolePermissions,
+  saveRolePermissions,
+  getCurrentUser,
 } from '@/lib/api';
 
 /* ===========================
    Types
 =========================== */
 type Role = { id: number; name: string; guard_name?: string };
+
 type User = {
   id: number;
   name: string;
   email: string;
   phone?: string | null;
   role_id?: number | null;
-  role_name?: string;
+  role_name?: string | null;
 };
+
 type Perm = { id: number; name: string; guard_name?: string };
 
 /* ===========================
@@ -31,17 +39,6 @@ function cx(...s: (string | false | undefined | null)[]) {
   return s.filter(Boolean).join(' ');
 }
 
-function groupPermissions(perms: Perm[]) {
-  const map: Record<string, Perm[]> = {};
-  perms.forEach((p) => {
-    const [g] = p.name.split('.');
-    const key = (g || 'khác').trim();
-    (map[key] ||= []).push(p);
-  });
-  Object.values(map).forEach((arr) => arr.sort((a, b) => a.name.localeCompare(b.name)));
-  return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
-}
-
 function useDebouncedValue<T>(value: T, delay = 350) {
   const [v, setV] = useState(value);
   useEffect(() => {
@@ -49,6 +46,14 @@ function useDebouncedValue<T>(value: T, delay = 350) {
     return () => clearTimeout(t);
   }, [value, delay]);
   return v;
+}
+
+function buildPermMap(me: any): Record<string, boolean> {
+  const arr = Array.isArray(me?.permissions) ? me.permissions : [];
+  return arr.reduce((acc: Record<string, boolean>, item: string) => {
+    acc[item] = true;
+    return acc;
+  }, {});
 }
 
 /* ===========================
@@ -76,13 +81,15 @@ function Pill({ active, children }: { active?: boolean; children: React.ReactNod
   );
 }
 
-function IconBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'default' | 'danger' }) {
+function IconBtn(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'default' | 'danger' }
+) {
   const { className, tone = 'default', ...rest } = props;
   return (
     <button
       {...rest}
       className={cx(
-        'h-9 px-3 rounded-lg border text-sm inline-flex items-center gap-2 hover:bg-gray-50 active:scale-[0.99] transition',
+        'h-9 px-3 rounded-lg border text-sm inline-flex items-center gap-2 hover:bg-gray-50 active:scale-[0.99] transition disabled:opacity-60',
         tone === 'danger' && 'text-red-600 hover:bg-red-50 border-red-200',
         className
       )}
@@ -180,20 +187,28 @@ function EmptyState({
 }
 
 /* ===========================
-   Roles & Permissions Panel (Optimized)
+   Roles & Permissions Panel
 =========================== */
-function RolesPermissionsPanel() {
+function RolesPermissionsPanel({ me }: { me: any }) {
+  const permsMap = useMemo(() => buildPermMap(me), [me]);
+
+  const canCreateRole = !!me?.is_admin || permsMap['roles.create'];
+  const canUpdateRole = !!me?.is_admin || permsMap['roles.update'];
+  const canDeleteRole = !!me?.is_admin || permsMap['roles.delete'];
+  const canAssignPermissions = !!me?.is_admin || permsMap['roles.assign_permissions'];
+  const canViewPermissions = !!me?.is_admin || permsMap['permissions.view'] || permsMap['roles.view'];
+
   const [roles, setRoles] = useState<Role[]>([]);
   const [perms, setPerms] = useState<Perm[]>([]);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [rolePermIds, setRolePermIds] = useState<number[]>([]);
+  const [loadingBase, setLoadingBase] = useState(false);
   const [loadingPerms, setLoadingPerms] = useState(false);
   const [saving, setSaving] = useState(false);
   const [newRoleName, setNewRoleName] = useState('');
   const [keyword, setKeyword] = useState('');
   const [onlySelected, setOnlySelected] = useState(false);
 
-  /* ---------- Labels (VN) ---------- */
   const MODULE_LABEL: Record<string, string> = {
     dashboard: 'Bảng điều khiển',
     map: 'Bản đồ',
@@ -212,14 +227,12 @@ function RolesPermissionsPanel() {
     'map.view': 'Xem bản đồ',
     'thongke.view': 'Xem thống kê',
 
-    // Cụm
     'cum.view': 'Xem cụm',
     'cum.create': 'Thêm cụm',
     'cum.update': 'Sửa cụm',
     'cum.delete': 'Xoá cụm',
     'cum.members.manage': 'Quản lý thành viên cụm',
 
-    // Kho
     'kho.view': 'Xem kho',
     'kho.create': 'Thêm kho',
     'kho.update': 'Sửa kho',
@@ -230,14 +243,12 @@ function RolesPermissionsPanel() {
     'kho.xuat': 'Xuất kho',
     'kho.chuyen': 'Chuyển kho',
 
-    // Vật tư
     'vattu.view': 'Xem vật tư',
     'vattu.create': 'Thêm vật tư',
     'vattu.update': 'Sửa vật tư',
     'vattu.delete': 'Xoá vật tư',
     'vattu.thongke.view': 'Xem thống kê vật tư',
 
-    // Yêu cầu
     'yeucau.view': 'Xem yêu cầu',
     'yeucau.create': 'Tạo yêu cầu',
     'yeucau.update': 'Sửa yêu cầu',
@@ -248,7 +259,6 @@ function RolesPermissionsPanel() {
     'yeucau.history.view': 'Xem lịch sử yêu cầu',
     'yeucau.media.view': 'Xem tệp đính kèm',
 
-    // Users/Roles/Permissions
     'users.view': 'Xem người dùng',
     'users.create': 'Thêm người dùng',
     'users.update': 'Sửa người dùng',
@@ -266,51 +276,69 @@ function RolesPermissionsPanel() {
 
   const permDisplay = (name: string) => PERM_LABEL[name] ?? name;
 
-  /* ---------- Ordering ---------- */
   const ORDER = [
-    'view', 'create', 'update', 'delete',
-    'nhap', 'xuat', 'chuyen',
-    'ton.view', 'lich_su.view',
-    'history.view', 'media.view',
-    'phancong', 'chuyen_xu_ly', 'cap_nhat_trang_thai',
-    'members.manage', 'manage_roles', 'assign_permissions',
+    'view',
+    'create',
+    'update',
+    'delete',
+    'nhap',
+    'xuat',
+    'chuyen',
+    'ton.view',
+    'lich_su.view',
+    'history.view',
+    'media.view',
+    'phancong',
+    'chuyen_xu_ly',
+    'cap_nhat_trang_thai',
+    'members.manage',
+    'manage_roles',
+    'assign_permissions',
   ];
 
   const permSortKey = (fullName: string) => {
     const parts = fullName.split('.');
-    const tail = parts.slice(1).join('.'); // vd: kho.ton.view => "ton.view"
+    const tail = parts.slice(1).join('.');
     const idx = ORDER.indexOf(tail);
     return idx === -1 ? 999 : idx;
   };
 
-  /* ---------- Grouping by module ---------- */
   const groupByModule = (list: Perm[]) => {
     const map: Record<string, Perm[]> = {};
-    list.forEach(p => {
+    list.forEach((p) => {
       const moduleKey = p.name.split('.')[0] || 'khác';
       (map[moduleKey] ||= []).push(p);
     });
-    Object.values(map).forEach(arr => arr.sort((a, b) => permSortKey(a.name) - permSortKey(b.name)));
-    return Object.entries(map).sort((a, b) => (MODULE_LABEL[a[0]] || a[0]).localeCompare(MODULE_LABEL[b[0]] || b[0]));
+
+    Object.values(map).forEach((arr) =>
+      arr.sort((a, b) => permSortKey(a.name) - permSortKey(b.name))
+    );
+
+    return Object.entries(map).sort((a, b) =>
+      (MODULE_LABEL[a[0]] || a[0]).localeCompare(MODULE_LABEL[b[0]] || b[0])
+    );
   };
 
-  /* ---------- Filtering ---------- */
   const filteredPerms = useMemo(() => {
     let list = perms;
 
     if (keyword.trim()) {
       const k = keyword.trim().toLowerCase();
-      list = list.filter(p => {
+      list = list.filter((p) => {
         const moduleKey = p.name.split('.')[0] || '';
         const moduleLabel = (MODULE_LABEL[moduleKey] || moduleKey).toLowerCase();
         const label = permDisplay(p.name).toLowerCase();
-        return p.name.toLowerCase().includes(k) || label.includes(k) || moduleLabel.includes(k);
+        return (
+          p.name.toLowerCase().includes(k) ||
+          label.includes(k) ||
+          moduleLabel.includes(k)
+        );
       });
     }
 
     if (onlySelected) {
       const set = new Set(rolePermIds);
-      list = list.filter(p => set.has(p.id));
+      list = list.filter((p) => set.has(p.id));
     }
 
     return list;
@@ -318,45 +346,77 @@ function RolesPermissionsPanel() {
 
   const grouped = useMemo(() => groupByModule(filteredPerms), [filteredPerms]);
 
-  /* ---------- Load base data ---------- */
   useEffect(() => {
-    (async () => {
-      const r = await listRoles();
-      setRoles(r?.data ?? r);
-      const p = await listPermissions();
-      setPerms(p?.data ?? p);
-    })();
-  }, []);
+    if (!canViewPermissions) return;
 
-  /* ---------- Role perms ---------- */
+    (async () => {
+      setLoadingBase(true);
+      try {
+        const r = await listRoles();
+        const roleRows = r?.data?.data ?? r?.data ?? r ?? [];
+        setRoles(Array.isArray(roleRows) ? roleRows : []);
+
+        const p = await listPermissions();
+        const permRows = p?.data?.data ?? p?.data ?? p ?? [];
+        setPerms(Array.isArray(permRows) ? permRows : []);
+      } catch (e) {
+        console.error('Load roles/permissions failed:', e);
+        setRoles([]);
+        setPerms([]);
+      } finally {
+        setLoadingBase(false);
+      }
+    })();
+  }, [canViewPermissions]);
+
   const openPermissions = async (role: Role) => {
     setSelectedRole(role);
+
+    if (!canViewPermissions) {
+      setRolePermIds([]);
+      return;
+    }
+
     setLoadingPerms(true);
     try {
       const rp = await getRolePermissions(role.id);
       setRolePermIds(rp?.permission_ids ?? []);
+    } catch (e) {
+      console.error('Load role permissions failed:', e);
+      setRolePermIds([]);
     } finally {
       setLoadingPerms(false);
     }
   };
 
   const togglePerm = (id: number, checked: boolean) => {
-    setRolePermIds(prev => checked ? Array.from(new Set([...prev, id])) : prev.filter(x => x !== id));
+    if (!canAssignPermissions) return;
+    setRolePermIds((prev) =>
+      checked ? Array.from(new Set([...prev, id])) : prev.filter((x) => x !== id)
+    );
   };
 
   const toggleMany = (ids: number[], checked: boolean) => {
-    setRolePermIds(prev => {
+    if (!canAssignPermissions) return;
+    setRolePermIds((prev) => {
       const set = new Set(prev);
-      ids.forEach(id => checked ? set.add(id) : set.delete(id));
+      ids.forEach((id) => (checked ? set.add(id) : set.delete(id)));
       return Array.from(set);
     });
   };
 
-  const selectAll = () => setRolePermIds(perms.map(p => p.id));
-  const unselectAll = () => setRolePermIds([]);
+  const selectAll = () => {
+    if (!canAssignPermissions) return;
+    setRolePermIds(perms.map((p) => p.id));
+  };
+
+  const unselectAll = () => {
+    if (!canAssignPermissions) return;
+    setRolePermIds([]);
+  };
 
   const handleSave = async () => {
-    if (!selectedRole) return;
+    if (!selectedRole || !canAssignPermissions) return;
     setSaving(true);
     try {
       await saveRolePermissions(selectedRole.id, rolePermIds);
@@ -368,68 +428,104 @@ function RolesPermissionsPanel() {
     }
   };
 
-  /* ---------- Role CRUD ---------- */
   const addRole = async () => {
+    if (!canCreateRole) return;
     const name = newRoleName.trim();
     if (!name) return;
-    const created = await createRole({ name });
-    setNewRoleName('');
-    const r = await listRoles();
-    const list = r?.data ?? r;
-    setRoles(list);
-    const id = created?.data?.id ?? created?.id;
-    if (id) {
-      const role = list.find((x: Role) => x.id === id);
-      if (role) openPermissions(role);
+
+    try {
+      const created = await createRole({ name });
+      setNewRoleName('');
+
+      const r = await listRoles();
+      const list = r?.data?.data ?? r?.data ?? r ?? [];
+      const rows = Array.isArray(list) ? list : [];
+      setRoles(rows);
+
+      const id = created?.data?.id ?? created?.id;
+      if (id) {
+        const role = rows.find((x: Role) => x.id === id);
+        if (role) {
+          await openPermissions(role);
+        }
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Không thể tạo nhóm quyền');
     }
   };
 
   const renameRole = async (role: Role) => {
+    if (!canUpdateRole) return;
     const name = prompt('Tên nhóm mới', role.name)?.trim();
     if (!name) return;
-    await updateRole(role.id, { name });
-    const r = await listRoles();
-    const list = r?.data ?? r;
-    setRoles(list);
-    if (selectedRole?.id === role.id) {
-      const refreshed = list.find((x: Role) => x.id === role.id) || role;
-      setSelectedRole(refreshed);
+
+    try {
+      await updateRole(role.id, { name });
+      const r = await listRoles();
+      const list = r?.data?.data ?? r?.data ?? r ?? [];
+      const rows = Array.isArray(list) ? list : [];
+      setRoles(rows);
+
+      if (selectedRole?.id === role.id) {
+        const refreshed = rows.find((x: Role) => x.id === role.id) || role;
+        setSelectedRole(refreshed);
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Không thể sửa nhóm quyền');
     }
   };
 
   const removeRole = async (role: Role) => {
+    if (!canDeleteRole) return;
     if (!confirm(`Xoá nhóm "${role.name}"?`)) return;
-    await deleteRole(role.id);
-    const r = await listRoles();
-    const list = r?.data ?? r;
-    setRoles(list);
-    if (selectedRole?.id === role.id) {
-      setSelectedRole(null);
-      setRolePermIds([]);
+
+    try {
+      await deleteRole(role.id);
+      const r = await listRoles();
+      const list = r?.data?.data ?? r?.data ?? r ?? [];
+      const rows = Array.isArray(list) ? list : [];
+      setRoles(rows);
+
+      if (selectedRole?.id === role.id) {
+        setSelectedRole(null);
+        setRolePermIds([]);
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Không thể xoá nhóm quyền');
     }
   };
 
-  /* ---------- Quick actions per module ---------- */
   const getModuleKey = (p: Perm) => p.name.split('.')[0] || 'khác';
 
   const idsOfModule = (moduleKey: string) =>
-    perms.filter(p => getModuleKey(p) === moduleKey).map(p => p.id);
+    perms.filter((p) => getModuleKey(p) === moduleKey).map((p) => p.id);
 
   const idsViewOfModule = (moduleKey: string) =>
     perms
-      .filter(p => getModuleKey(p) === moduleKey)
-      .filter(p => p.name === `${moduleKey}.view` || p.name.endsWith('.view'))
-      .map(p => p.id);
+      .filter((p) => getModuleKey(p) === moduleKey)
+      .filter((p) => p.name === `${moduleKey}.view` || p.name.endsWith('.view'))
+      .map((p) => p.id);
 
   const idsCRUDOfModule = (moduleKey: string) => {
-    const want = new Set([`${moduleKey}.view`, `${moduleKey}.create`, `${moduleKey}.update`, `${moduleKey}.delete`]);
-    return perms.filter(p => want.has(p.name)).map(p => p.id);
+    const want = new Set([
+      `${moduleKey}.view`,
+      `${moduleKey}.create`,
+      `${moduleKey}.update`,
+      `${moduleKey}.delete`,
+    ]);
+    return perms.filter((p) => want.has(p.name)).map((p) => p.id);
   };
 
-  /* ---------- UI ---------- */
+  if (!canViewPermissions) {
+    return (
+      <div className="rounded-2xl border bg-white shadow-sm p-6 text-sm text-red-600">
+        Bạn không có quyền xem nhóm & quyền.
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      {/* LEFT: Roles */}
       <div className="lg:col-span-4 rounded-2xl border bg-white shadow-sm overflow-hidden">
         <div className="p-4 border-b">
           <div className="text-base font-semibold">Nhóm</div>
@@ -442,58 +538,80 @@ function RolesPermissionsPanel() {
               className="h-10 border rounded-lg px-3 flex-1 focus:outline-none focus:ring-2 focus:ring-black/10"
               placeholder="Tên nhóm mới…"
               value={newRoleName}
-              onChange={e => setNewRoleName(e.target.value)}
+              onChange={(e) => setNewRoleName(e.target.value)}
+              disabled={!canCreateRole}
             />
-            <button onClick={addRole} className="h-10 px-4 rounded-lg bg-black text-white text-sm font-medium">
-              Thêm
-            </button>
+            {canCreateRole && (
+              <button
+                onClick={addRole}
+                className="h-10 px-4 rounded-lg bg-black text-white text-sm font-medium"
+              >
+                Thêm
+              </button>
+            )}
           </div>
         </div>
 
         <div className="p-2 max-h-[70vh] overflow-auto">
-          {roles.map(r => {
-            const active = selectedRole?.id === r.id;
-            return (
-              <div
-                key={r.id}
-                className={cx(
-                  'flex items-center justify-between rounded-xl border p-3 m-2 hover:bg-gray-50 transition',
-                  active && 'border-black'
-                )}
-              >
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{r.name}</div>
-                  <div className="text-xs text-gray-500 truncate">role_id: {r.id}</div>
-                </div>
+          {loadingBase ? (
+            <div className="p-4">
+              <Skeleton rows={6} />
+            </div>
+          ) : roles.length ? (
+            roles.map((r) => {
+              const active = selectedRole?.id === r.id;
 
-                <div className="flex gap-2 shrink-0">
-                  <button
-                    onClick={() => openPermissions(r)}
-                    className={cx(
-                      'h-9 px-3 rounded-lg border text-sm hover:bg-gray-50',
-                      active && 'bg-black text-white border-black hover:bg-black'
+              return (
+                <div
+                  key={r.id}
+                  className={cx(
+                    'flex items-center justify-between rounded-xl border p-3 m-2 hover:bg-gray-50 transition',
+                    active && 'border-black'
+                  )}
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{r.name}</div>
+                    <div className="text-xs text-gray-500 truncate">role_id: {r.id}</div>
+                  </div>
+
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      onClick={() => openPermissions(r)}
+                      className={cx(
+                        'h-9 px-3 rounded-lg border text-sm hover:bg-gray-50',
+                        active && 'bg-black text-white border-black hover:bg-black'
+                      )}
+                    >
+                      Quyền
+                    </button>
+
+                    {canUpdateRole && (
+                      <button
+                        onClick={() => renameRole(r)}
+                        className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
+                      >
+                        Sửa
+                      </button>
                     )}
-                  >
-                    Quyền
-                  </button>
-                  <button onClick={() => renameRole(r)} className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50">
-                    Sửa
-                  </button>
-                  <button
-                    onClick={() => removeRole(r)}
-                    className="h-9 px-3 rounded-lg border text-sm text-red-600 border-red-200 hover:bg-red-50"
-                  >
-                    Xoá
-                  </button>
+
+                    {canDeleteRole && (
+                      <button
+                        onClick={() => removeRole(r)}
+                        className="h-9 px-3 rounded-lg border text-sm text-red-600 border-red-200 hover:bg-red-50"
+                      >
+                        Xoá
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-          {!roles.length && <div className="p-6 text-center text-sm text-gray-500">Chưa có nhóm nào.</div>}
+              );
+            })
+          ) : (
+            <div className="p-6 text-center text-sm text-gray-500">Chưa có nhóm nào.</div>
+          )}
         </div>
       </div>
 
-      {/* RIGHT: Permissions */}
       <div className="lg:col-span-8 rounded-2xl border bg-white shadow-sm overflow-hidden">
         <div className="p-4 border-b flex items-start justify-between gap-3">
           <div className="space-y-1">
@@ -506,11 +624,11 @@ function RolesPermissionsPanel() {
               )}
             </div>
             <div className="text-sm text-gray-500">
-              Hiển thị quyền theo module, tên quyền tiếng Việt (hover để xem mã kỹ thuật).
+              Hiển thị quyền theo module, tên quyền tiếng Việt.
             </div>
           </div>
 
-          {selectedRole ? (
+          {selectedRole && canAssignPermissions ? (
             <div className="flex gap-2 shrink-0">
               <button onClick={selectAll} className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50">
                 Chọn tất cả
@@ -530,9 +648,9 @@ function RolesPermissionsPanel() {
               <div className="grid sm:grid-cols-2 gap-3">
                 <input
                   className="h-10 border rounded-lg px-3 w-full focus:outline-none focus:ring-2 focus:ring-black/10"
-                  placeholder="Tìm quyền… (vd: kho, xem, xóa, phân công...)"
+                  placeholder="Tìm quyền…"
                   value={keyword}
-                  onChange={e => setKeyword(e.target.value)}
+                  onChange={(e) => setKeyword(e.target.value)}
                 />
 
                 <label className="h-10 border rounded-lg px-3 flex items-center justify-between gap-3 cursor-pointer select-none">
@@ -540,7 +658,7 @@ function RolesPermissionsPanel() {
                   <input
                     type="checkbox"
                     checked={onlySelected}
-                    onChange={e => setOnlySelected(e.currentTarget.checked)}
+                    onChange={(e) => setOnlySelected(e.currentTarget.checked)}
                   />
                 </label>
               </div>
@@ -556,23 +674,24 @@ function RolesPermissionsPanel() {
             ) : (
               <div className="max-h-[65vh] overflow-auto p-4 space-y-4">
                 {grouped.map(([moduleKey, arr]) => {
-                  const ids = arr.map(p => p.id);
-                  const checkedCount = ids.filter(id => rolePermIds.includes(id)).length;
+                  const ids = arr.map((p) => p.id);
+                  const checkedCount = ids.filter((id) => rolePermIds.includes(id)).length;
                   const checkedAll = checkedCount === ids.length && ids.length > 0;
                   const indeterminate = checkedCount > 0 && checkedCount < ids.length;
-
                   const moduleLabel = MODULE_LABEL[moduleKey] || moduleKey;
 
                   return (
                     <div key={moduleKey} className="rounded-2xl border p-4">
-                      {/* module header */}
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
                         <div className="flex items-center gap-3">
                           <input
                             type="checkbox"
                             checked={checkedAll}
-                            ref={(el) => { if (el) el.indeterminate = indeterminate; }}
-                            onChange={e => toggleMany(ids, e.currentTarget.checked)}
+                            ref={(el) => {
+                              if (el) el.indeterminate = indeterminate;
+                            }}
+                            onChange={(e) => toggleMany(ids, e.currentTarget.checked)}
+                            disabled={!canAssignPermissions}
                           />
                           <div className="min-w-0">
                             <div className="font-semibold">{moduleLabel}</div>
@@ -582,42 +701,38 @@ function RolesPermissionsPanel() {
                           </div>
                         </div>
 
-                        {/* quick actions */}
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
-                            onClick={() => toggleMany(idsViewOfModule(moduleKey), true)}
-                            title="Chọn tất cả quyền xem trong module"
-                          >
-                            Chỉ xem
-                          </button>
-                          <button
-                            className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
-                            onClick={() => toggleMany(idsCRUDOfModule(moduleKey), true)}
-                            title="Chọn quyền Xem/Thêm/Sửa/Xoá"
-                          >
-                            CRUD
-                          </button>
-                          <button
-                            className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
-                            onClick={() => toggleMany(idsOfModule(moduleKey), true)}
-                            title="Chọn toàn bộ quyền trong module"
-                          >
-                            Tất cả
-                          </button>
-                          <button
-                            className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
-                            onClick={() => toggleMany(idsOfModule(moduleKey), false)}
-                            title="Bỏ toàn bộ quyền module"
-                          >
-                            Bỏ chọn
-                          </button>
-                        </div>
+                        {canAssignPermissions && (
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
+                              onClick={() => toggleMany(idsViewOfModule(moduleKey), true)}
+                            >
+                              Chỉ xem
+                            </button>
+                            <button
+                              className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
+                              onClick={() => toggleMany(idsCRUDOfModule(moduleKey), true)}
+                            >
+                              CRUD
+                            </button>
+                            <button
+                              className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
+                              onClick={() => toggleMany(idsOfModule(moduleKey), true)}
+                            >
+                              Tất cả
+                            </button>
+                            <button
+                              className="h-9 px-3 rounded-lg border text-sm hover:bg-gray-50"
+                              onClick={() => toggleMany(idsOfModule(moduleKey), false)}
+                            >
+                              Bỏ chọn
+                            </button>
+                          </div>
+                        )}
                       </div>
 
-                      {/* permissions grid */}
                       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                        {arr.map(p => {
+                        {arr.map((p) => {
                           const checked = rolePermIds.includes(p.id);
                           return (
                             <label
@@ -626,13 +741,14 @@ function RolesPermissionsPanel() {
                                 'flex items-start gap-2 rounded-xl border px-3 py-2 hover:bg-gray-50 transition cursor-pointer',
                                 checked && 'border-black'
                               )}
-                              title={p.name} // tooltip mã kỹ thuật
+                              title={p.name}
                             >
                               <input
                                 type="checkbox"
                                 className="mt-0.5"
                                 checked={checked}
-                                onChange={e => togglePerm(p.id, e.currentTarget.checked)}
+                                onChange={(e) => togglePerm(p.id, e.currentTarget.checked)}
+                                disabled={!canAssignPermissions}
                               />
                               <div className="min-w-0">
                                 <div className="text-sm font-medium truncate">{permDisplay(p.name)}</div>
@@ -647,22 +763,22 @@ function RolesPermissionsPanel() {
                 })}
 
                 {!grouped.length && (
-                  <div className="p-10 text-center text-sm text-gray-500">
-                    Không có quyền phù hợp.
-                  </div>
+                  <div className="p-10 text-center text-sm text-gray-500">Không có quyền phù hợp.</div>
                 )}
               </div>
             )}
 
-            <div className="p-4 border-t flex justify-end">
-              <button
-                disabled={saving}
-                onClick={handleSave}
-                className="h-10 px-4 rounded-lg bg-black text-white text-sm font-medium disabled:opacity-60"
-              >
-                {saving ? 'Đang lưu…' : 'Lưu quyền'}
-              </button>
-            </div>
+            {canAssignPermissions && (
+              <div className="p-4 border-t flex justify-end">
+                <button
+                  disabled={saving}
+                  onClick={handleSave}
+                  className="h-10 px-4 rounded-lg bg-black text-white text-sm font-medium disabled:opacity-60"
+                >
+                  {saving ? 'Đang lưu…' : 'Lưu quyền'}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -671,19 +787,33 @@ function RolesPermissionsPanel() {
 }
 
 /* ===========================
-   Users Tab (list + CRUD)
+   Users Panel
 =========================== */
-function UsersPanel() {
+function UsersPanel({ me }: { me: any }) {
+  const perms = useMemo(() => buildPermMap(me), [me]);
+
+  const canViewUsers = !!me?.is_admin || perms['users.view'];
+  const canCreate = !!me?.is_admin || perms['users.create'];
+  const canUpdate = !!me?.is_admin || perms['users.update'];
+  const canDelete = !!me?.is_admin || perms['users.delete'];
+
+  const canManageRoles = !!me?.is_admin || perms['users.manage_roles'] || perms['roles.view'];
+
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [q, setQ] = useState('');
   const debouncedQ = useDebouncedValue(q, 350);
   const [loading, setLoading] = useState(false);
 
-  // modal
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
-  const [frm, setFrm] = useState<{ name: string; email: string; phone?: string; password?: string; role_id?: number | '' }>({
+  const [frm, setFrm] = useState<{
+    name: string;
+    email: string;
+    phone?: string;
+    password?: string;
+    role_id?: number | '';
+  }>({
     name: '',
     email: '',
     phone: '',
@@ -693,47 +823,87 @@ function UsersPanel() {
   const [saving, setSaving] = useState(false);
 
   const load = async (query?: string) => {
+    if (!canViewUsers) {
+      setUsers([]);
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await listUsers({ q: (query ?? q).trim() });
-      setUsers(res?.data ?? res);
+      const rows = res?.data?.data ?? res?.data ?? res ?? [];
+      setUsers(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      console.error('Load users failed:', e);
+      setUsers([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    (async () => {
-      const r = await listRoles();
-      setRoles(r?.data ?? r);
-      await load('');
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  if (!canViewUsers) return;
 
-  // debounce search auto load
+  (async () => {
+    try {
+      await load('');
+    } catch (e) {
+      console.error('Load users failed:', e);
+      setUsers([]);
+    }
+
+    if (canManageRoles) {
+      try {
+        const r = await listRoles();
+        const roleRows = r?.data?.data ?? r?.data ?? r ?? [];
+        setRoles(Array.isArray(roleRows) ? roleRows : []);
+      } catch (e) {
+        console.error('Load roles failed:', e);
+        setRoles([]);
+      }
+    } else {
+      setRoles([]);
+    }
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [canViewUsers, canManageRoles]);
+
   useEffect(() => {
+    if (!canViewUsers) return;
     load(debouncedQ);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQ]);
+  }, [debouncedQ, canViewUsers]);
 
   const startCreate = () => {
+    if (!canCreate) return;
     setEditing(null);
     setFrm({ name: '', email: '', phone: '', password: '', role_id: '' });
     setOpen(true);
   };
 
-  const startEdit = async (u: User) => {
-    // Nếu cần detail: const detail = await getUser(u.id)
+  const startEdit = (u: User) => {
+    if (!canUpdate) return;
     setEditing(u);
-    setFrm({ name: u.name, email: u.email, phone: u.phone || '', password: '', role_id: u.role_id ?? '' });
+    setFrm({
+      name: u.name,
+      email: u.email,
+      phone: u.phone || '',
+      password: '',
+      role_id: u.role_id ?? '',
+    });
     setOpen(true);
   };
 
   const doDelete = async (u: User) => {
+    if (!canDelete) return;
     if (!confirm(`Xoá "${u.name}"?`)) return;
-    await deleteUser(u.id);
-    await load(debouncedQ);
+
+    try {
+      await deleteUser(u.id);
+      await load(debouncedQ);
+    } catch (e: any) {
+      alert(e?.message || 'Không thể xoá người dùng');
+    }
   };
 
   const save = async () => {
@@ -741,6 +911,10 @@ function UsersPanel() {
       alert('Nhập tên & email');
       return;
     }
+
+    if (!editing && !canCreate) return;
+    if (editing && !canUpdate) return;
+
     setSaving(true);
     try {
       if (editing) {
@@ -750,7 +924,10 @@ function UsersPanel() {
           phone: (frm.phone || '').trim() || undefined,
           role_id: frm.role_id ? Number(frm.role_id) : undefined,
         };
-        if (frm.password && frm.password.trim()) payload.password = frm.password.trim();
+
+        if (frm.password && frm.password.trim()) {
+          payload.password = frm.password.trim();
+        }
 
         await updateUser(editing.id, payload);
         alert('Đã cập nhật.');
@@ -764,6 +941,7 @@ function UsersPanel() {
         });
         alert('Đã tạo người dùng.');
       }
+
       setOpen(false);
       await load(debouncedQ);
     } catch (e: any) {
@@ -773,9 +951,16 @@ function UsersPanel() {
     }
   };
 
+  if (!canViewUsers) {
+    return (
+      <div className="rounded-2xl border bg-white shadow-sm p-6 text-sm text-red-600">
+        Bạn không có quyền xem danh sách người dùng.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {/* toolbar */}
       <div className="rounded-2xl border bg-white shadow-sm p-4 flex flex-col md:flex-row md:items-center gap-3">
         <div className="flex-1">
           <SectionTitle title="Người dùng" desc="Tìm kiếm và quản lý thành viên hệ thống" />
@@ -791,11 +976,10 @@ function UsersPanel() {
             />
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔎</span>
           </div>
-          <PrimaryBtn onClick={startCreate}>+ Thêm thành viên</PrimaryBtn>
+          {canCreate && <PrimaryBtn onClick={startCreate}>+ Thêm thành viên</PrimaryBtn>}
         </div>
       </div>
 
-      {/* table */}
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -832,10 +1016,12 @@ function UsersPanel() {
                     </td>
                     <td className="p-3 text-right">
                       <div className="inline-flex gap-2">
-                        <IconBtn onClick={() => startEdit(u)}>Sửa</IconBtn>
-                        <IconBtn tone="danger" onClick={() => doDelete(u)}>
-                          Xoá
-                        </IconBtn>
+                        {canUpdate && <IconBtn onClick={() => startEdit(u)}>Sửa</IconBtn>}
+                        {canDelete && (
+                          <IconBtn tone="danger" onClick={() => doDelete(u)}>
+                            Xoá
+                          </IconBtn>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -845,8 +1031,12 @@ function UsersPanel() {
                   <td colSpan={6} className="p-6">
                     <EmptyState
                       title="Không có dữ liệu"
-                      desc={q.trim() ? 'Không tìm thấy người dùng phù hợp từ khoá.' : 'Tạo người dùng đầu tiên để bắt đầu.'}
-                      action={<PrimaryBtn onClick={startCreate}>+ Thêm thành viên</PrimaryBtn>}
+                      desc={
+                        q.trim()
+                          ? 'Không tìm thấy người dùng phù hợp từ khoá.'
+                          : 'Tạo người dùng đầu tiên để bắt đầu.'
+                      }
+                      action={canCreate ? <PrimaryBtn onClick={startCreate}>+ Thêm thành viên</PrimaryBtn> : null}
                     />
                   </td>
                 </tr>
@@ -861,7 +1051,6 @@ function UsersPanel() {
         </div>
       </div>
 
-      {/* modal */}
       <Modal
         open={open}
         onClose={() => !saving && setOpen(false)}
@@ -906,7 +1095,9 @@ function UsersPanel() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">{editing ? 'Mật khẩu (để trống nếu giữ nguyên)' : 'Mật khẩu'}</label>
+            <label className="text-sm font-medium">
+              {editing ? 'Mật khẩu (để trống nếu giữ nguyên)' : 'Mật khẩu'}
+            </label>
             <input
               type="password"
               className="mt-1 w-full h-10 border rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-black/10"
@@ -920,7 +1111,9 @@ function UsersPanel() {
             <select
               className="mt-1 w-full h-10 border rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-black/10"
               value={frm.role_id ?? ''}
-              onChange={(e) => setFrm({ ...frm, role_id: e.target.value ? Number(e.target.value) : '' })}
+              onChange={(e) =>
+                setFrm({ ...frm, role_id: e.target.value ? Number(e.target.value) : '' })
+              }
             >
               <option value="">-- Chọn nhóm --</option>
               {roles.map((r) => (
@@ -941,14 +1134,60 @@ function UsersPanel() {
 }
 
 /* ===========================
-   PAGE
+   Page
 =========================== */
 export default function UsersPage() {
   const [tab, setTab] = useState<'users' | 'roles'>('users');
+  const [me, setMe] = useState<any>(null);
+  const [loadingMe, setLoadingMe] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await getCurrentUser();
+        setMe(data);
+      } catch (e) {
+        console.error('Load current user failed:', e);
+      } finally {
+        setLoadingMe(false);
+      }
+    })();
+  }, []);
+
+  const perms = useMemo(() => buildPermMap(me), [me]);
+
+  const canViewUsers = !!me?.is_admin || perms['users.view'];
+  const canViewRoles = !!me?.is_admin || perms['roles.view'] || perms['permissions.view'];
+
+  useEffect(() => {
+    if (loadingMe) return;
+
+    if (!canViewUsers && canViewRoles) {
+      setTab('roles');
+      return;
+    }
+
+    if (canViewUsers) {
+      setTab('users');
+    }
+  }, [loadingMe, canViewUsers, canViewRoles]);
+
+  if (loadingMe) {
+    return <div className="p-4">Đang tải...</div>;
+  }
+
+  if (!canViewUsers && !canViewRoles) {
+    return (
+      <div className="p-4">
+        <div className="rounded-xl border bg-white p-4 text-sm text-red-600">
+          Bạn không có quyền truy cập trang này.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 space-y-4">
-      {/* header */}
       <div className="rounded-2xl border bg-white shadow-sm p-4 flex flex-col md:flex-row md:items-center gap-3">
         <div className="flex-1">
           <div className="text-xl font-semibold">Quản trị người dùng</div>
@@ -956,29 +1195,34 @@ export default function UsersPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setTab('users')}
-            className={cx(
-              'h-9 px-4 rounded-full border text-sm transition',
-              tab === 'users' ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
-            )}
-          >
-            Người dùng
-          </button>
+          {canViewUsers && (
+            <button
+              onClick={() => setTab('users')}
+              className={cx(
+                'h-9 px-4 rounded-full border text-sm transition',
+                tab === 'users' ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
+              )}
+            >
+              Người dùng
+            </button>
+          )}
 
-          <button
-            onClick={() => setTab('roles')}
-            className={cx(
-              'h-9 px-4 rounded-full border text-sm transition',
-              tab === 'roles' ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
-            )}
-          >
-            Nhóm & Quyền
-          </button>
+          {canViewRoles && (
+            <button
+              onClick={() => setTab('roles')}
+              className={cx(
+                'h-9 px-4 rounded-full border text-sm transition',
+                tab === 'roles' ? 'bg-black text-white border-black' : 'hover:bg-gray-50'
+              )}
+            >
+              Nhóm & Quyền
+            </button>
+          )}
         </div>
       </div>
 
-      {tab === 'users' ? <UsersPanel /> : <RolesPermissionsPanel />}
+      {tab === 'users' && canViewUsers ? <UsersPanel me={me} /> : null}
+      {tab === 'roles' && canViewRoles ? <RolesPermissionsPanel me={me} /> : null}
     </div>
   );
 }

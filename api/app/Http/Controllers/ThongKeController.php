@@ -39,7 +39,6 @@ class ThongKeController extends Controller
 
         $cumColumn = $tableAlias . '.cum_id';
 
-        // Quản trị: được xem tất cả, hoặc lọc theo cum_id nếu có
         if ($this->isAdmin($user)) {
             if ($req->filled('cum_id')) {
                 $query->where($cumColumn, (int) $req->cum_id);
@@ -48,7 +47,6 @@ class ThongKeController extends Controller
             return $query;
         }
 
-        // User thường: chỉ được xem các cụm của mình
         $allowedCumIds = $this->getAllowedCumIds($user);
 
         if (empty($allowedCumIds)) {
@@ -68,6 +66,192 @@ class ThongKeController extends Controller
         return $query->whereIn($cumColumn, $allowedCumIds);
     }
 
+    private function getScopedCumRows(Request $req)
+    {
+        $user = $req->user();
+
+        $query = DB::table('cum')->select('id', 'ten');
+
+        if (!$user) {
+            return collect();
+        }
+
+        if ($this->isAdmin($user)) {
+            if ($req->filled('cum_id')) {
+                $query->where('id', (int) $req->cum_id);
+            }
+
+            return $query->get();
+        }
+
+        $allowedCumIds = $this->getAllowedCumIds($user);
+
+        if (empty($allowedCumIds)) {
+            return collect();
+        }
+
+        if ($req->filled('cum_id')) {
+            $requestedCumId = (int) $req->cum_id;
+
+            if (!in_array($requestedCumId, $allowedCumIds, true)) {
+                return collect();
+            }
+
+            $query->where('id', $requestedCumId);
+            return $query->get();
+        }
+
+        return $query->whereIn('id', $allowedCumIds)->get();
+    }
+
+    private function buildVatTuTheoCum(Request $req, bool $onlyAssignedToMe = false): array
+    {
+        $user = $req->user();
+        $uid = $user->id;
+
+        $cums = $this->getScopedCumRows($req);
+
+        if ($cums->isEmpty()) {
+            return [];
+        }
+
+        $cumIds = $cums->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        // 1) Tổng tồn theo cụm = cộng tồn các kho thuộc cụm
+        $tonRows = DB::table('kho as k')
+            ->join('kho_ton as kt', 'kt.kho_id', '=', 'k.id')
+            ->leftJoin('vattu as vt', 'vt.id', '=', 'kt.vattu_id')
+            ->whereIn('k.cum_id', $cumIds)
+            ->selectRaw('
+                k.cum_id,
+                kt.vattu_id,
+                vt.ten,
+                vt.donvi,
+                COALESCE(SUM(kt.so_luong), 0) as ton
+            ')
+            ->groupBy('k.cum_id', 'kt.vattu_id', 'vt.ten', 'vt.donvi')
+            ->get();
+
+        // 2) Tổng nhu cầu theo cụm từ yêu cầu chưa hoàn tất
+        $needQuery = DB::table('yeu_cau_vattu as yct')
+            ->join('yeu_cau as y', 'y.id', '=', 'yct.yeu_cau_id')
+            ->leftJoin('vattu as vt', 'vt.id', '=', 'yct.vattu_id')
+            ->whereIn('y.cum_id', $cumIds)
+            ->whereIn('y.trang_thai', ['tiep_nhan', 'da_chuyen_cum', 'dang_xu_ly']);
+
+        if ($onlyAssignedToMe) {
+            $needQuery->where('y.duoc_giao_cho', $uid);
+        }
+
+        $needRows = $needQuery
+            ->selectRaw('
+                y.cum_id,
+                yct.vattu_id,
+                vt.ten,
+                vt.donvi,
+                COALESCE(SUM(yct.so_luong), 0) as can
+            ')
+            ->groupBy('y.cum_id', 'yct.vattu_id', 'vt.ten', 'vt.donvi')
+            ->get();
+
+        // 3) Gộp theo key cum_id + vattu_id
+        $map = [];
+
+        foreach ($tonRows as $r) {
+            $key = $r->cum_id . '_' . $r->vattu_id;
+            $map[$key] = [
+                'cum_id' => (int) $r->cum_id,
+                'vattu_id' => (int) $r->vattu_id,
+                'ten' => $r->ten,
+                'donvi' => $r->donvi,
+                'ton' => (float) $r->ton,
+                'can' => 0,
+            ];
+        }
+
+        foreach ($needRows as $r) {
+            $key = $r->cum_id . '_' . $r->vattu_id;
+
+            if (!isset($map[$key])) {
+                $map[$key] = [
+                    'cum_id' => (int) $r->cum_id,
+                    'vattu_id' => (int) $r->vattu_id,
+                    'ten' => $r->ten,
+                    'donvi' => $r->donvi,
+                    'ton' => 0,
+                    'can' => 0,
+                ];
+            }
+
+            $map[$key]['can'] = (float) $r->can;
+        }
+
+        // 4) Khởi tạo group theo cụm
+        $grouped = [];
+
+        foreach ($cums as $cum) {
+            $grouped[(int) $cum->id] = [
+                'cum_id' => (int) $cum->id,
+                'cum_ten' => $cum->ten,
+                'mat_hang_thieu' => 0,
+                'mat_hang_du' => 0,
+                'mat_hang_du_vua' => 0,
+                'tong_so_luong_thieu' => 0,
+                'tong_so_luong_du' => 0,
+                'items' => [],
+            ];
+        }
+
+        // 5) Đổ item vào từng cụm
+        foreach ($map as $row) {
+            $cumId = (int) $row['cum_id'];
+
+            if (!isset($grouped[$cumId])) {
+                continue;
+            }
+
+            $du = (float) $row['ton'] - (float) $row['can'];
+
+            $item = [
+                'vattu_id' => $row['vattu_id'],
+                'ten' => $row['ten'],
+                'donvi' => $row['donvi'],
+                'ton' => (float) $row['ton'],
+                'can' => (float) $row['can'],
+                'du' => $du,
+            ];
+
+            $grouped[$cumId]['items'][] = $item;
+
+            if ($du < 0) {
+                $grouped[$cumId]['mat_hang_thieu']++;
+                $grouped[$cumId]['tong_so_luong_thieu'] += abs($du);
+            } elseif ($du > 0) {
+                $grouped[$cumId]['mat_hang_du']++;
+                $grouped[$cumId]['tong_so_luong_du'] += $du;
+            } else {
+                $grouped[$cumId]['mat_hang_du_vua']++;
+            }
+        }
+
+        // 6) Sort item trong từng cụm: thiếu trước, đủ sau, dư cuối
+        foreach ($grouped as &$cum) {
+            usort($cum['items'], function ($a, $b) {
+                $priorityA = $a['du'] < 0 ? 0 : ($a['du'] == 0 ? 1 : 2);
+                $priorityB = $b['du'] < 0 ? 0 : ($b['du'] == 0 ? 1 : 2);
+
+                if ($priorityA !== $priorityB) {
+                    return $priorityA <=> $priorityB;
+                }
+
+                return abs($b['du']) <=> abs($a['du']);
+            });
+        }
+        unset($cum);
+
+        return array_values($grouped);
+    }
+
     public function index(Request $req)
     {
         $today = Carbon::today();
@@ -81,21 +265,12 @@ class ThongKeController extends Controller
         $this->applyCumScope($base, $req, 'yeu_cau');
 
         if ($onlyAssignedToMe) {
-            $user = $req->user();
-            $cumIds = collect($this->getAllowedCumIds($user));
-
-            $base->where(function ($q) use ($uid, $cumIds) {
-                $q->where('yeu_cau.duoc_giao_cho', $uid);
-
-                if ($cumIds->isNotEmpty()) {
-                    $q->orWhereIn('yeu_cau.cum_id', $cumIds->all());
-                }
-            });
+            $base->where('yeu_cau.duoc_giao_cho', $uid);
         }
 
         $tong = (clone $base)->count();
         $da_xu_ly = (clone $base)->where('yeu_cau.trang_thai', 'da_hoan_thanh')->count();
-        $chua_xu_ly = (clone $base)->where('yeu_cau.trang_thai', 'tiep_nhan')->count();
+        $chua_xu_ly = (clone $base)->whereIn('yeu_cau.trang_thai', ['tiep_nhan', 'da_chuyen_cum'])->count();
 
         $trong_ngay_tong = (clone $base)->whereDate('yeu_cau.created_at', $today)->count();
         $trong_ngay_da = (clone $base)
@@ -105,43 +280,35 @@ class ThongKeController extends Controller
 
         $trong_ngay_chua = (clone $base)
             ->whereDate('yeu_cau.created_at', $today)
-            ->where('yeu_cau.trang_thai', 'tiep_nhan')
+            ->whereIn('yeu_cau.trang_thai', ['tiep_nhan', 'da_chuyen_cum'])
             ->count();
 
         // =========================================================
         // Tổng nhu yếu phẩm trong các yêu cầu chưa xử lý
         // =========================================================
-        $tong_nhu_yeu_pham = DB::table('yeu_cau_vattu as yct')
+        $tongNhuYeuPhamQuery = DB::table('yeu_cau_vattu as yct')
             ->join('yeu_cau as y', 'y.id', '=', 'yct.yeu_cau_id');
 
-        $this->applyCumScope($tong_nhu_yeu_pham, $req, 'y');
+        $this->applyCumScope($tongNhuYeuPhamQuery, $req, 'y');
 
         if ($onlyAssignedToMe) {
-            $user = $req->user();
-            $cumIds = collect($this->getAllowedCumIds($user));
-
-            $tong_nhu_yeu_pham->where(function ($q) use ($uid, $cumIds) {
-                $q->where('y.duoc_giao_cho', $uid);
-
-                if ($cumIds->isNotEmpty()) {
-                    $q->orWhereIn('y.cum_id', $cumIds->all());
-                }
-            });
+            $tongNhuYeuPhamQuery->where('y.duoc_giao_cho', $uid);
         }
 
-        $tong_nhu_yeu_pham = $tong_nhu_yeu_pham
-            ->where('y.trang_thai', 'tiep_nhan')
+        $tong_nhu_yeu_pham = $tongNhuYeuPhamQuery
+            ->whereIn('y.trang_thai', ['tiep_nhan', 'da_chuyen_cum', 'dang_xu_ly'])
             ->sum('yct.so_luong');
 
         // =========================================================
-        // Subquery tồn kho theo vật tư
+        // Subquery tồn kho theo vật tư (toàn phạm vi hiện tại)
+        // Lưu ý: bản này vẫn là tổng hợp theo vật tư, chưa tách cụm
         // =========================================================
         $tons = DB::table('kho_ton')
             ->select('vattu_id', DB::raw('SUM(so_luong) as ton'))
             ->groupBy('vattu_id');
 
         // =========================================================
-        // Subquery nhu cầu vật tư theo các yêu cầu đang tiếp nhận
+        // Subquery nhu cầu vật tư theo yêu cầu đang cần xử lý
         // =========================================================
         $yeucau = DB::table('yeu_cau_vattu as yct')
             ->join('yeu_cau as y', 'y.id', '=', 'yct.yeu_cau_id');
@@ -149,25 +316,16 @@ class ThongKeController extends Controller
         $this->applyCumScope($yeucau, $req, 'y');
 
         if ($onlyAssignedToMe) {
-            $user = $req->user();
-            $cumIds = collect($this->getAllowedCumIds($user));
-
-            $yeucau->where(function ($q) use ($uid, $cumIds) {
-                $q->where('y.duoc_giao_cho', $uid);
-
-                if ($cumIds->isNotEmpty()) {
-                    $q->orWhereIn('y.cum_id', $cumIds->all());
-                }
-            });
+            $yeucau->where('y.duoc_giao_cho', $uid);
         }
 
         $yeucau = $yeucau
-            ->where('y.trang_thai', 'tiep_nhan')
+            ->whereIn('y.trang_thai', ['tiep_nhan', 'da_chuyen_cum', 'dang_xu_ly'])
             ->select('yct.vattu_id', DB::raw('SUM(yct.so_luong) as can'))
             ->groupBy('yct.vattu_id');
 
         // =========================================================
-        // Join để lấy tên vật tư + tính dư/thiếu
+        // Join lấy tên vật tư + tính dư/thiếu tổng
         // =========================================================
         $du_thieu = DB::table(DB::raw('(' . $tons->toSql() . ') as t'))
             ->mergeBindings($tons)
@@ -177,6 +335,7 @@ class ThongKeController extends Controller
             ->select(
                 'c.vattu_id',
                 'v.ten as ten',
+                'v.donvi',
                 DB::raw('COALESCE(t.ton,0) as ton'),
                 'c.can',
                 DB::raw('(COALESCE(t.ton,0) - c.can) as du')
@@ -197,6 +356,7 @@ class ThongKeController extends Controller
                 'tong_nhu_yeu_pham_chua_xu_ly' => $tong_nhu_yeu_pham,
                 'du_thieu' => $du_thieu,
             ],
+            'vat_tu_theo_cum' => $this->buildVatTuTheoCum($req, $onlyAssignedToMe),
         ]);
     }
 }

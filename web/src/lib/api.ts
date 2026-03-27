@@ -48,7 +48,7 @@ export async function api(path: string, init: RequestInit = {}) {
 }
 
 export async function getCurrentUser() {
-  return api('/me');
+  return api('/admin/me');
 }
 
 // ==============================
@@ -366,9 +366,12 @@ export async function deleteVatTu(id: number) {
 // ==============================
 // USERS
 // ==============================
+// ==============================
+// USERS
+// ==============================
 export async function listUsers(params: any = {}) {
   const usp = new URLSearchParams(params).toString();
-  return api(`/users${usp ? `?${usp}` : ""}`);
+  return api(`/admin/users${usp ? `?${usp}` : ""}`);
 }
 
 export async function getUser(id: number | string) {
@@ -376,21 +379,21 @@ export async function getUser(id: number | string) {
 }
 
 export async function createUser(body: any) {
-  return api(`/users`, {
+  return api(`/admin/users`, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
 export async function updateUser(id: number, body: any) {
-  return api(`/users/${id}`, {
+  return api(`/admin/users/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
 }
 
 export async function deleteUser(id: number) {
-  return api(`/users/${id}`, {
+  return api(`/admin/users/${id}`, {
     method: "DELETE",
   });
 }

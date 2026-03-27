@@ -144,6 +144,8 @@ export default function YeuCauPage() {
 
   const [loadingInit, setLoadingInit] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [loadingTransferUsers, setLoadingTransferUsers] = useState(false);
+  const [loadedTransferUsers, setLoadedTransferUsers] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
 
   const [q, setQ] = useState('');
@@ -189,21 +191,26 @@ export default function YeuCauPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [currentUser, clustersData, usersData] = await Promise.all([
-          getCurrentUser(),
-          listClusters(''),
-          listUsers(''),
-        ]);
-
-        const allClusters = clustersData?.data ?? [];
+        const currentUser = await getCurrentUser();
         const myViewableCums = currentUser?.viewable_cums ?? [];
 
         setIsAdmin(!!currentUser?.is_admin);
-        setClusters(allClusters);
-        setViewableCums(currentUser?.is_admin ? allClusters : myViewableCums);
-        setUsers(usersData?.data ?? []);
+        setViewableCums(myViewableCums);
+
+        try {
+          const clustersData = await listClusters('');
+          const allClusters = clustersData?.data ?? [];
+          setClusters(allClusters);
+          setViewableCums(currentUser?.is_admin ? allClusters : myViewableCums);
+        } catch (err) {
+          console.error('Load clusters failed:', err);
+          setClusters([]);
+          setViewableCums(myViewableCums);
+        }
+
+        setUsers([]);
       } catch (e) {
-        console.error(e);
+        console.error('Load current user failed:', e);
       } finally {
         setLoadingInit(false);
       }
@@ -263,6 +270,22 @@ export default function YeuCauPage() {
     return () => abortRef.current?.abort();
   }, [loadData, loadingInit]);
 
+  const ensureTransferUsers = useCallback(async () => {
+    if (loadedTransferUsers) return;
+
+    setLoadingTransferUsers(true);
+    try {
+      const usersData = await listUsers({ for_transfer: 1 });
+      setUsers(usersData?.data ?? []);
+      setLoadedTransferUsers(true);
+    } catch (err) {
+      console.error('Load transfer users failed:', err);
+      setUsers([]);
+    } finally {
+      setLoadingTransferUsers(false);
+    }
+  }, [loadedTransferUsers]);
+
   const filteredTransferUsers = useMemo(() => {
     if (!transferToCum) return users;
     const selectedCumId = Number(transferToCum);
@@ -272,7 +295,8 @@ export default function YeuCauPage() {
     );
   }, [users, transferToCum]);
 
-  const openTransferDialog = (row: any) => {
+  const openTransferDialog = async (row: any) => {
+    await ensureTransferUsers();
     setOpenTransfer({ open: true, row });
     setTransferToCum(row?.cum_id ? String(row.cum_id) : '');
     setTransferToUser('');
@@ -606,7 +630,9 @@ export default function YeuCauPage() {
                   <b>Nội dung:</b> {selectedRow.noi_dung ?? selectedRow.noidung ?? '—'}
                 </div>
                 <div className="text-sm">
-                  <b>Trạng thái:</b> {STATUS_UI[(selectedRow.trang_thai ?? 'tiep_nhan') as TrangThaiCode]?.label ?? selectedRow.trang_thai}
+                  <b>Trạng thái:</b>{' '}
+                  {STATUS_UI[(selectedRow.trang_thai ?? 'tiep_nhan') as TrangThaiCode]?.label ??
+                    selectedRow.trang_thai}
                 </div>
                 <div className="text-sm">
                   <b>Số người:</b> {selectedRow.so_nguoi ?? selectedRow.songuoi ?? '—'}
@@ -715,11 +741,16 @@ export default function YeuCauPage() {
               <div>
                 <label className="text-sm font-medium">Người nhận (tùy chọn)</label>
                 <select
-                  className="mt-1 border rounded-xl h-10 px-3 w-full bg-white"
+                  className="mt-1 border rounded-xl h-10 px-3 w-full bg-white disabled:bg-slate-100 disabled:text-slate-500"
                   value={transferToUser}
                   onChange={(e) => setTransferToUser(e.target.value)}
+                  disabled={loadingTransferUsers}
                 >
-                  <option value="">— Chỉ chuyển về cụm —</option>
+                  <option value="">
+                    {loadingTransferUsers
+                      ? 'Đang tải danh sách người nhận...'
+                      : '— Chỉ chuyển về cụm —'}
+                  </option>
                   {filteredTransferUsers.map((u: any) => (
                     <option key={u.id} value={u.id}>
                       {u.name} ({u.email})
